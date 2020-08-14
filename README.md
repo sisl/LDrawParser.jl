@@ -4,7 +4,7 @@
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://kylejbrown17.github.io/LDrawParser.jl/dev)
 [![Build Status](https://github.com/kylejbrown17/LDrawParser.jl/workflows/CI/badge.svg)](https://github.com/kylejbrown17/LDrawParser.jl/actions)
 
-A package for parsing [LDraw]{https://www.ldraw.org/} files for LEGO CAD applications.
+A package for parsing [LDraw](https://www.ldraw.org/) files for LEGO CAD applications.
 
 Example usage:
 
