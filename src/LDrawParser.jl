@@ -61,6 +61,7 @@ file.
 """
 struct BuildingStep
     lines::Vector{SubFileRef}
+    BuildingStep() = new(Vector{SubFileRef}())
 end
 Base.push!(step::BuildingStep,ref::SubFileRef) = push!(step.lines,ref)
 
@@ -87,7 +88,9 @@ export
 """
     DATModel
 
-Encodes the raw geometry of a LDraw part stored in a .dat file
+Encodes the raw geometry of a LDraw part stored in a .dat file. It is possible
+to avoid populating the geometry fields, which is useful for large models or
+models that use parts from the LDraw library.
 """
 struct DATModel
     name::String
@@ -96,8 +99,8 @@ struct DATModel
     quadrilateral_geometry::Vector{NgonElement{GeometryBasics.NNgon{4}}}
     optional_line_geometry::Vector{OptionalLineElement}
     subfiles::Vector{SubFileRef} # points to other DATModels
-    DATModel() = new(
-        "",
+    DATModel(name::String) = new(
+        name,
         Vector{NgonElement{Line}}(),
         Vector{NgonElement{Triangle}}(),
         Vector{NgonElement{GeometryBasics.NNgon{4}}}(),
@@ -121,17 +124,19 @@ end
 
 """
     MPDModel
+
+The MPD model stores the information contained in a .mpd or .ldr file. This
+includes a submodel tree (stored implicitly in a dictionary that maps model_name
+to SubModelPlan) and a part list. The first model in MPDModel.models is the main
+model. All the following are submodels of that model and/or each other.
 """
 struct MPDModel
-    # sub_file_refs::Vector{SubFileRef}
-    # ldr_models::Vector{DATModel}
     models::Dict{String,SubModelPlan} # each file is a list of steps
     parts::Dict{String,DATModel}
     # steps
     MPDModel() = new(
-        Vector{SubFileRef}(),
-        Vector{DATModel}([DATModel()]),
-        Vector{SubModelPlan}()
+        Dict{String,SubModelPlan}(),
+        Dict{String,DATModel}()
     )
 end
 
@@ -148,9 +153,39 @@ function active_submodel(model::MPDModel,state)
     @assert !isempty(model.models)
     return model.models[state.active_model]
 end
+function set_new_active_model!(model::MPDModel,state,name)
+    @assert !haskey(model.models,name)
+    model.models[name] = SubModelPlan(name)
+    return MPDModelState(state,active_model=name)
+end
 function active_building_step(model::MPDModel,state)
-    active_submodel = active_submodel(model,state)
-    return active_building_step(active_submodel,state)
+    active_model = active_submodel(model,state)
+    return active_building_step(active_model,state)
+end
+function set_new_active_building_step!(model::SubModelPlan)
+    push!(model.steps,BuildingStep())
+    return model
+end
+function set_new_active_building_step!(model::MPDModel,state)
+    active_model = active_submodel(model,state)
+    set_new_active_building_step!(active_model)
+    return model
+end
+function active_part(model::MPDModel,state)
+    @assert !isempty(model.parts)
+    return model.parts[state.active_part]
+end
+function set_new_active_part!(model::MPDModel,state,name)
+    @assert !haskey(model.parts,name)
+    model.parts[name] = DATModel(name)
+    return MPDModelState(state,active_part=name)
+end
+function add_sub_file_placement!(model::MPDModel,state,ref)
+    push!(active_building_step(model,state),ref)
+    if !haskey(model.parts,ref.file)
+        model.parts[ref.file] = DATModel(ref.file)
+    end
+    return state
 end
 
 """
@@ -195,22 +230,30 @@ parse_ldraw_file(io) = parse_ldraw_file!(MPDModel(),io)
 parse_color(c) = parse(Int,c)
 
 """
-    read_meta_line(model,line)
+    read_meta_line(model,state,line)
+
+Modifies the model and parser_state based on a META command. For example, the
+FILE meta command indicates the beginning of a new file, so this creates a new
+active model into which subsequent building steps will be placed.
+The STEP meta command indicates the end of the current step, which prompts the
+parser to close the current build step and begin a new one.
 """
 function read_meta_line!(model,state,line)
     @assert parse(Int,line[1]) == META
     cmd = line[2]
     if cmd == "FILE"
-        file_name = join(line[3:end]," ")
-        ext = splitext(file_name)[2]
+        filename = join(line[3:end]," ")
+        ext = splitext(filename)[2]
         if ext == ".dat"
-            push!(model.models,)
+            state = set_new_active_part!(model,state,filename)
         elseif ext == ".mpd" || ext == ".ldr"
-            push!(model.models,SubModelPlan(file_name))
-            state = MPDModelState(state,active_model = file_name)
+            state = set_new_active_model!(model,state,filename)
         end
+    elseif cmd == "STEP"
+        set_new_active_building_step!(model,state)
+    else
+        # TODO Handle other META commands, especially BFC
     end
-    # TODO
     return state
 end
 
@@ -235,7 +278,8 @@ function read_sub_file_ref!(model,state,line)
         Mat{3,3,Float64}(rot_mat),
         file
     )
-    push!(model.sub_file_refs,ref)
+    add_sub_file_placement!(model,state,ref)
+    # push!(model.sub_file_refs,ref)
     return state
 end
 
@@ -252,7 +296,7 @@ function read_line(model,state,line)
     p2 = Point3D(parse.(Int,line[6:8]))
     # add to model
     push!(
-        active_building_step(model).line_geometry,
+        active_part(model).line_geometry,
         NgonElement(color,Line(p1,p2))
         )
     return state
@@ -272,7 +316,7 @@ function read_triangle(model,state,triangle)
     p3 = Point3D(parse.(Int,line[9:11]))
     # add to model
     push!(
-        active_building_step(model).triangle_geometry,
+        active_part(model).triangle_geometry,
         NgonElement(color,Triangle(p1,p2,p3))
         )
     return state
@@ -293,7 +337,7 @@ function read_quadrilateral(model,state,line)
     p4 = Point3D(parse.(Int,line[12:14]))
     # add to model
     push!(
-        active_building_step(model).quadrilateral_geometry,
+        active_part(model).quadrilateral_geometry,
         NgonElement(color,GeometryBasics.NNgon{4}(p1,p2,p3,p4))
         )
     return state
@@ -314,7 +358,7 @@ function read_optional_line(model,state,line)
     p4 = Point3D(parse.(Int,line[12:14]))
     # add to model
     push!(
-        active_building_step(model).optional_line_geometry,
+        active_part(model).optional_line_geometry,
         OptionalLineElement(
             color,
             Line(p1,p2),
