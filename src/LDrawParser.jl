@@ -195,8 +195,8 @@ Args:
     - model
     - filename or IO
 """
-function parse_ldraw_file!(model,io)
-    state = MPDModelState()
+function parse_ldraw_file!(model,io,state = MPDModelState())
+    # state = MPDModelState()
     for line in eachline(io)
         @show line
         if length(line) == 0
@@ -220,9 +220,9 @@ function parse_ldraw_file!(model,io)
     end
     return model
 end
-function parse_ldraw_file!(model,filename::String)
+function parse_ldraw_file!(model,filename::String,args...)
     open(filename,"r") do io
-        parse_ldraw_file!(model,io)
+        parse_ldraw_file!(model,io,args...)
     end
 end
 
