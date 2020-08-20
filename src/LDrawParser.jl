@@ -4,6 +4,32 @@ using LightGraphs
 using GeometryBasics
 using Parameters
 
+export
+    get_part_library_dir,
+    set_part_library_dir!,
+    find_part_file
+
+global PART_LIBRARY_DIR = "/scratch/ldraw_parts_library/ldraw/"
+get_part_library_dir() = deepcopy(PART_LIBRARY_DIR)
+function set_part_library_dir!(path)
+    PART_LIBRARY_DIR = path
+end
+
+function find_part_file(name,library=get_part_library_dir())
+    directories = [joinpath(library,"p"),joinpath(library,"parts")]
+    for d in directories
+        p = joinpath(d,name)
+        if isfile(p)
+            return p
+        end
+        p = joinpath(d,lowercase(name))
+        if isfile(p)
+            return p
+        end
+    end
+    println("Part file ",name," not found in library at ",library)
+end
+
 # Each line of an LDraw file begins with a number 0-5
 const META          = 0
 const SUB_FILE_REF  = 1
@@ -13,11 +39,14 @@ const QUADRILATERAL = 4
 const OPTIONAL      = 5
 
 function parse_line(line)
-    split_line = split(line," ")
-    return
+    if Base.Sys.isunix()
+        line = replace(line,"\\"=>"/") # switch from Windows directory delimiters to Unix
+    end
+    split_line = split(line)
+    return split_line
 end
 
-const Point3D   = Point
+const Point3D   = Point{3,Float64}
 
 """
     NgonElement
@@ -85,6 +114,12 @@ export
     parse_ldraw_file!,
     parse_ldraw_file
 
+
+const Quadrilateral{Dim,T} = GeometryBasics.Ngon{Dim,T,4,Point{Dim,T}}
+mutable struct Toggle
+    status::Bool
+end
+
 """
     DATModel
 
@@ -94,18 +129,20 @@ models that use parts from the LDraw library.
 """
 struct DATModel
     name::String
-    line_geometry::Vector{NgonElement{Line}}
-    triangle_geometry::Vector{NgonElement{Triangle}}
-    quadrilateral_geometry::Vector{NgonElement{GeometryBasics.NNgon{4}}}
+    line_geometry::Vector{NgonElement{Line{3,Float64}}}
+    triangle_geometry::Vector{NgonElement{Triangle{3,Float64}}}
+    quadrilateral_geometry::Vector{NgonElement{Quadrilateral{3,Float64}}}
     optional_line_geometry::Vector{OptionalLineElement}
     subfiles::Vector{SubFileRef} # points to other DATModels
+    populated::Toggle
     DATModel(name::String) = new(
         name,
-        Vector{NgonElement{Line}}(),
-        Vector{NgonElement{Triangle}}(),
-        Vector{NgonElement{GeometryBasics.NNgon{4}}}(),
+        Vector{NgonElement{Line{3,Float64}}}(),
+        Vector{NgonElement{Triangle{3,Float64}}}(),
+        Vector{NgonElement{Quadrilateral{3,Float64}}}(),
         Vector{OptionalLineElement}(),
-        Vector{String}()
+        Vector{String}(),
+        Toggle(false)
     )
 end
 
@@ -181,7 +218,9 @@ function set_new_active_part!(model::MPDModel,state,name)
     return MPDModelState(state,active_part=name)
 end
 function add_sub_file_placement!(model::MPDModel,state,ref)
-    push!(active_building_step(model,state),ref)
+    if state.active_model != ""
+        push!(active_building_step(model,state),ref)
+    end
     if !haskey(model.parts,ref.file)
         model.parts[ref.file] = DATModel(ref.file)
     end
@@ -202,7 +241,11 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
         if length(line) == 0
             continue
         end
-        split_line = split(line," ")
+        # split_line = split(line," ")
+        split_line = parse_line(line)
+        if isempty(split_line[1])
+            continue
+        end
         code = parse(Int,split_line[1])
         if code == META
             state = read_meta_line!(model,state,split_line)
@@ -229,6 +272,43 @@ end
 parse_ldraw_file(io) = parse_ldraw_file!(MPDModel(),io)
 parse_color(c) = parse(Int,c)
 
+export populate_part_geometry!
+
+"""
+    populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
+
+Populate `model` with geometry (from ".dat" files only) of all parts that belong
+to model and whose names are included in `part_keys`.
+"""
+function populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
+    excluded_keys = setdiff(Set(collect(keys(model.parts))), part_keys)
+    explored = Set{String}()
+    while !isempty(part_keys)
+        while !isempty(part_keys)
+            partfile = pop!(part_keys)
+            populate_part_geometry!(model,partfile)
+            push!(explored,partfile)
+        end
+        part_keys = setdiff(Set(collect(keys(model.parts))),union(explored,excluded_keys))
+    end
+    return model
+end
+function populate_part_geometry!(model,partfile::String)
+    state = LDrawParser.MPDModelState(active_part=partfile)
+    if splitext(partfile)[end] == ".dat"
+        println("PART FILE ",partfile)
+        part = model.parts[partfile]
+        if part.populated.status
+            println("Geometry already populated for part ",partfile)
+            return false
+        else
+            parse_ldraw_file!(model,find_part_file(partfile),state)
+            part.populated.status = true
+            return true
+        end
+    end
+end
+
 """
     read_meta_line(model,state,line)
 
@@ -240,6 +320,10 @@ parser to close the current build step and begin a new one.
 """
 function read_meta_line!(model,state,line)
     @assert parse(Int,line[1]) == META
+    if length(line) < 2
+        # usually this means the end of the file
+        return state
+    end
     cmd = line[2]
     if cmd == "FILE"
         filename = join(line[3:end]," ")
@@ -264,7 +348,7 @@ Receives a SUB_FILE_REF line (with the leading SUB_FILE_REF id stripped)
 """
 function read_sub_file_ref!(model,state,line)
     @assert parse(Int,line[1]) == SUB_FILE_REF
-    @assert length(line) >= 15
+    @assert length(line) >= 15 "$line"
     color = parse_color(line[2])
     # coordinate of part
     x,y,z = parse.(Float64,line[3:5])
@@ -284,81 +368,81 @@ function read_sub_file_ref!(model,state,line)
 end
 
 """
-    read_line
+    read_line!
 
 For reading lines of type LINE
 """
-function read_line(model,state,line)
+function read_line!(model,state,line)
     @assert parse(Int,line[1]) == LINE
-    @assert length(line) == 8
+    @assert length(line) == 8 "$line"
     color = parse_color(line[2])
-    p1 = Point3D(parse.(Int,line[3:5]))
-    p2 = Point3D(parse.(Int,line[6:8]))
+    p1 = Point3D(parse.(Float64,line[3:5]))
+    p2 = Point3D(parse.(Float64,line[6:8]))
     # add to model
     push!(
-        active_part(model).line_geometry,
+        active_part(model,state).line_geometry,
         NgonElement(color,Line(p1,p2))
         )
     return state
 end
 
 """
-    read_triangle
+    read_triangle!
 
 For reading lines of type TRIANGLE
 """
-function read_triangle(model,state,triangle)
+function read_triangle!(model,state,line)
     @assert parse(Int,line[1]) == TRIANGLE
-    @assert length(line) == 11
+    @assert length(line) == 11 "$line"
     color = parse_color(line[2])
-    p1 = Point3D(parse.(Int,line[3:5]))
-    p2 = Point3D(parse.(Int,line[6:8]))
-    p3 = Point3D(parse.(Int,line[9:11]))
+    p1 = Point3D(parse.(Float64,line[3:5]))
+    p2 = Point3D(parse.(Float64,line[6:8]))
+    p3 = Point3D(parse.(Float64,line[9:11]))
     # add to model
     push!(
-        active_part(model).triangle_geometry,
+        active_part(model,state).triangle_geometry,
         NgonElement(color,Triangle(p1,p2,p3))
         )
     return state
 end
 
 """
-    read_quadrilateral
+    read_quadrilateral!
 
 For reading lines of type QUADRILATERAL
 """
-function read_quadrilateral(model,state,line)
+function read_quadrilateral!(model,state,line)
     @assert parse(Int,line[1]) == QUADRILATERAL
-    @assert length(line) == 14
+    @assert length(line) == 14 "$line"
     color = parse_color(line[2])
-    p1 = Point3D(parse.(Int,line[3:5]))
-    p2 = Point3D(parse.(Int,line[6:8]))
-    p3 = Point3D(parse.(Int,line[9:11]))
-    p4 = Point3D(parse.(Int,line[12:14]))
+    p1 = Point3D(parse.(Float64,line[3:5]))
+    p2 = Point3D(parse.(Float64,line[6:8]))
+    p3 = Point3D(parse.(Float64,line[9:11]))
+    p4 = Point3D(parse.(Float64,line[12:14]))
     # add to model
     push!(
-        active_part(model).quadrilateral_geometry,
-        NgonElement(color,GeometryBasics.NNgon{4}(p1,p2,p3,p4))
+        active_part(model,state).quadrilateral_geometry,
+        NgonElement(color,GeometryBasics.Quadrilateral(p1,p2,p3,p4))
         )
     return state
 end
 
 """
-    read_quadrilateral
+    read_optional_line!
 
-For reading lines of type QUADRILATERAL
+For reading lines of type OPTIONAL
 """
-function read_optional_line(model,state,line)
-    @assert parse(Int,line[1]) == OPTIONAL_LINE
+function read_optional_line!(model,state,line)
+    @assert parse(Int,line[1]) == OPTIONAL
     @assert length(line) == 14
     color = parse_color(line[2])
-    p1 = Point3D(parse.(Int,line[3:5]))
-    p2 = Point3D(parse.(Int,line[6:8]))
-    p3 = Point3D(parse.(Int,line[9:11]))
-    p4 = Point3D(parse.(Int,line[12:14]))
+    p1 = Point3D(parse.(Float64,line[3:5]))
+    p2 = Point3D(parse.(Float64,line[6:8]))
+    p3 = Point3D(parse.(Float64,line[9:11]))
+    p4 = Point3D(parse.(Float64,line[12:14]))
     # add to model
     push!(
-        active_part(model).optional_line_geometry,
+        active_part(model,state).optional_line_geometry,
         OptionalLineElement(
             color,
             Line(p1,p2),
