@@ -213,7 +213,7 @@ function active_part(model::MPDModel,state)
     return model.parts[state.active_part]
 end
 function set_new_active_part!(model::MPDModel,state,name)
-    @assert !haskey(model.parts,name)
+    @assert !haskey(model.parts,name) "$name is already in model.parts!"
     model.parts[name] = DATModel(name)
     println("Active part = $name")
     return MPDModelState(state,active_part=name)
@@ -339,6 +339,7 @@ function read_meta_line!(model,state,line)
             state = set_new_active_part!(model,state,filename)
         elseif ext == ".mpd" || ext == ".ldr"
             state = set_new_active_model!(model,state,filename)
+            # state = set_new_active_part!(model,state,filename)
         end
     elseif cmd == "STEP"
         set_new_active_building_step!(model,state)
