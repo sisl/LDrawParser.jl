@@ -215,6 +215,7 @@ end
 function set_new_active_part!(model::MPDModel,state,name)
     @assert !haskey(model.parts,name)
     model.parts[name] = DATModel(name)
+    println("Active part = $name")
     return MPDModelState(state,active_part=name)
 end
 function add_sub_file_placement!(model::MPDModel,state,ref)
@@ -237,28 +238,33 @@ Args:
 function parse_ldraw_file!(model,io,state = MPDModelState())
     # state = MPDModelState()
     for line in eachline(io)
-        @show line
-        if length(line) == 0
-            continue
-        end
-        # split_line = split(line," ")
-        split_line = parse_line(line)
-        if isempty(split_line[1])
-            continue
-        end
-        code = parse(Int,split_line[1])
-        if code == META
-            state = read_meta_line!(model,state,split_line)
-        elseif code == SUB_FILE_REF
-            state = read_sub_file_ref!(model,state,split_line)
-        elseif code == LINE
-            state = read_line!(model,state,split_line)
-        elseif code == TRIANGLE
-            state = read_triangle!(model,state,split_line)
-        elseif code == QUADRILATERAL
-            state = read_quadrilateral!(model,state,split_line)
-        elseif code == OPTIONAL
-            state = read_optional_line!(model,state,split_line)
+        try
+            # @show line
+            if length(line) == 0
+                continue
+            end
+            # split_line = split(line," ")
+            split_line = parse_line(line)
+            if isempty(split_line[1])
+                continue
+            end
+            code = parse(Int,split_line[1])
+            if code == META
+                state = read_meta_line!(model,state,split_line)
+            elseif code == SUB_FILE_REF
+                state = read_sub_file_ref!(model,state,split_line)
+            elseif code == LINE
+                state = read_line!(model,state,split_line)
+            elseif code == TRIANGLE
+                state = read_triangle!(model,state,split_line)
+            elseif code == QUADRILATERAL
+                state = read_quadrilateral!(model,state,split_line)
+            elseif code == OPTIONAL
+                state = read_optional_line!(model,state,split_line)
+            end
+        catch e
+            @show state
+            rethrow(e)
         end
     end
     return model
@@ -322,6 +328,7 @@ function read_meta_line!(model,state,line)
     @assert parse(Int,line[1]) == META
     if length(line) < 2
         # usually this means the end of the file
+        # println("Returning because length(line) < 2")
         return state
     end
     cmd = line[2]
