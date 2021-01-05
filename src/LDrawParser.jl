@@ -81,6 +81,8 @@ struct SubFileRef
     rot::Mat{3,3,Float64}
     file::String
 end
+Base.string(s::SubFileRef) = string("SubFileRef → ",s.file)
+Base.show(io::IO,s::SubFileRef) = print(io,string(s))
 
 """
     BuildingStep
@@ -93,6 +95,9 @@ struct BuildingStep
     BuildingStep() = new(Vector{SubFileRef}())
 end
 Base.push!(step::BuildingStep,ref::SubFileRef) = push!(step.lines,ref)
+Base.string(s::BuildingStep) = string("BuildingStep:",map(r->string("\n  ",string(r)), s.lines)...)
+Base.show(io::IO,s::BuildingStep) = print(io,string(s))
+
 
 """
     SubModelPlan
