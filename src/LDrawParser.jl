@@ -82,8 +82,7 @@ struct SubFileRef
     rot::Mat{3,3,Float64}
     file::String
 end
-Base.string(s::SubFileRef) = string("SubFileRef → ",s.file," : ",s.pos)
-Base.show(io::IO,s::SubFileRef) = print(io,string(s))
+Base.summary(s::SubFileRef) = string("SubFileRef → ",s.file," : ",s.pos)
 model_name(r::SubFileRef) = r.file
 
 """
@@ -97,6 +96,7 @@ struct BuildingStep
     BuildingStep() = new(Vector{SubFileRef}())
 end
 Base.push!(step::BuildingStep,ref::SubFileRef) = push!(step.lines,ref)
+n_lines(s::BuildingStep) = length(s.lines)
 # Base.string(s::BuildingStep) = string("BuildingStep:",map(r->string("\n  ",string(r)), s.lines)...)
 # Base.show(io::IO,s::BuildingStep) = print(io,string(s))
 
@@ -115,6 +115,10 @@ struct SubModelPlan
         )
 end
 model_name(r::SubModelPlan) = r.name
+n_build_steps(m::SubModelPlan) = length(m.steps)
+n_components(m::SubModelPlan) = sum(map(n_lines,m.steps))
+Base.summary(n::SubModelPlan) = string(model_name(n),": ",
+    n_build_steps(n)," building steps, ",n_components(n)," components")
 
 export
     MPDModel,
@@ -471,6 +475,10 @@ end
 ############################ Constructing Model Tree ###########################
 ################################################################################
 
+# model::MPDModel - model.parts contains raw geometry of all parts
+# assembly_tree::AssemblyTree - stored transforms of all parts and submodels
+# model_schedule - encodes the partial ordering of assembly operations.
+
 export
     DuplicateIDGenerator,
     duplicate_subtree!,
@@ -497,34 +505,36 @@ function (g::DuplicateIDGenerator)(id)
     g.id_map[new_id] = id
     new_id
 end
-function duplicate_subtree!(g,old_root,id_generator,edge_generator=(a,b,c)->1)
+function duplicate_subtree!(g,old_root)
     old_node = get_node(g,old_root)
-    new_root = add_node!(g,old_node.val,id_generator(old_node.id))
+    new_root = add_node!(g,old_node.val)
     for v in outneighbors(g,old_root)
-        new_v = duplicate_subtree!(g,v,id_generator,edge_generator)
-        add_edge!(g,new_root,new_v,edge_generator(g,new_root,new_v))
+        new_v = duplicate_subtree!(g,v)
+        add_edge!(g,new_root,new_v)
         @assert !is_cyclic(g)
     end
     return new_root
 end
+# duplicate_subtree!(g::MPDModelGraph,v) = duplicate_subtree!(g,v,g.id_generator)
 
 """
     MPDModelGraph{N,ID} <: AbstractCustomNDiGraph{CustomNode{N,ID},ID}
 
-Graph to represent the modeling operations required to build a LDraw model. The
-final model is the root of the graph, and its ancestors are the operations
-building up thereto.
+Graph to represent the modeling operations required to build a LDraw model.
+Currently used both as an assembly tree and a "model schedule".
+In the model schedule, the final model is the root of the graph, and its
+ancestors are the operations building up thereto.
 """
-@with_kw_noshow struct MPDModelGraph{N,ID} <: AbstractCustomNDiGraph{CustomNode{N,ID},ID}
-    graph       ::DiGraph       = DiGraph()
-    nodes       ::Vector{N}     = Vector{N}()
-    vtx_map     ::Dict{ID,Int}  = Dict{ID,Int}()
-    vtx_ids     ::Vector{ID}    = Vector{ID}() # maps vertex uid to actual graph node
-    id_generator::DuplicateIDGenerator{ID} = DuplicateIDGenerator{ID}()
+@with_kw struct MPDModelGraph{N,ID} <: AbstractCustomNDiGraph{CustomNode{N,ID},ID}
+    graph       ::DiGraph                   = DiGraph()
+    nodes       ::Vector{CustomNode{N,ID}}  = Vector{CustomNode{N,ID}}()
+    vtx_map     ::Dict{ID,Int}              = Dict{ID,Int}()
+    vtx_ids     ::Vector{ID}                = Vector{ID}() # maps vertex uid to actual graph node
+    id_generator::DuplicateIDGenerator{ID}  = DuplicateIDGenerator{ID}()
 end
 create_node_id(g,v::BuildingStep) = g.id_generator("BuildingStep")
 create_node_id(g,v::SubModelPlan) = model_name(v)
-create_node_id(g,v::SubFileRef)   = model_name(v)
+create_node_id(g,v::SubFileRef)   = g.id_generator(model_name(v))
 function GraphUtils.add_node!(g::MPDModelGraph{N,ID},val::N) where {N,ID}
     id = create_node_id(g,val)
     add_node!(g,val,id)
@@ -541,59 +551,72 @@ parent step to the child.
            |           |
         [    build_step   ]
 """
-function add_build_step!(model_graph,build_step::BuildingStep,parent_step=-1)
-    child = add_node!(model_graph,build_step)
-    if has_vertex(model_graph,parent_step)
-        for v in outneighbors(model_graph,parent_step)
-            add_edge!(model_graph,v,child)
-        end
-    end
-    add_edge!(model_graph,parent_step,child) # Do I want this or not?
-    for line in s.lines
+function add_build_step!(model_graph,build_step::BuildingStep,preceding_step=-1)
+    node = add_node!(model_graph,build_step)
+    for line in build_step.lines
         input = add_node!(model_graph,line)
-        add_edge!(model_graph,child,input)
+        add_edge!(model_graph,input,node)
+        add_edge!(model_graph,preceding_step,input)
     end
-    child
+    # if has_vertex(model_graph,preceding_step)
+    #     for v in inneighbors(model_graph,preceding_step)
+    #         add_edge!(model_graph,v,child)
+    #     end
+    # end
+    add_edge!(model_graph,preceding_step,node) # Do I want this or not?
+    node
 end
 function populate_model_subgraph!(model_graph,model::SubModelPlan)
-    # Add sequence of build steps
-    # n = get_node(model_graph,v)
-    # m = node_val(n) # model
     n = add_node!(model_graph,model)
-    parent_step = -1
-    for build_step in reverse(model.steps)
-        parent_step = add_build_step!(model_graph,build_step,parent_step)
+    preceding_step = -1
+    for build_step in model.steps
+        preceding_step = add_build_step!(model_graph,build_step,preceding_step)
     end
-    add_edge!(model_graph,n,parent_step)
+    add_edge!(model_graph,preceding_step,n)
 end
-function construct_assembly_graph(model)
-    id_generator=DuplicateIDGenerator{String}()
-    NODE_TYPE=Union{SubModelPlan,BuildingStep,SubFileRef}
-    # NODE_TYPE=String
-    model_graph = GraphUtils.NGraph{DiGraph,NODE_TYPE,String}()
+"""
+    construct_model_schedule(model)
+
+Edges go forward in time.
+"""
+function construct_model_schedule(model)
+    NODE_VAL_TYPE=Union{SubModelPlan,BuildingStep,SubFileRef}
+    model_graph = MPDModelGraph{NODE_VAL_TYPE,String}()
     for (k,m) in model.models
-        # n = add_node!(model_graph,k,k)
-        n = add_node!(model_graph,m,k)
-        for s in m.steps
-            for line in s.lines
-                np = add_node!(model_graph,line,id_generator(line.file))
-                add_edge!(model_graph,n,np,1)
-            end
-        end
-    end
-    for (k,m) in model.models
-        node = get_node(model_graph,k)
-        for v in collect(outneighbors(model_graph,k))
-            child = get_node(model_graph,v)
-            if haskey(model.models,GraphUtils.node_val(child)) # is_submodel
-                sub_model_id = model_name(GraphUtils.node_val(child))
-                np = duplicate_subtree!(model_graph,sub_model_id,id_generator)
-                add_edge!(model_graph,node,np,1)
-                rem_edge!(model_graph,node,child)
-            end
-        end
+        populate_model_subgraph!(model_graph,m)
     end
     return model_graph
 end
+
+
+function construct_assembly_graph(model)
+    NODE_VAL_TYPE=Union{SubModelPlan,SubFileRef}
+    # ID_TYPE=String
+    # model_graph = GraphUtils.NGraph{DiGraph,NODE_TYPE,String}()
+    model_graph = MPDModelGraph{NODE_VAL_TYPE,String}()
+    for (k,m) in model.models
+        n = add_node!(model_graph,m,k)
+        for s in m.steps
+            for line in s.lines
+                np = add_node!(model_graph,line) #,id_generator(line.file))
+                add_edge!(model_graph,n,np)
+            end
+        end
+    end
+    # for (k,m) in model.models
+    #     node = get_node(model_graph,k)
+    #     for v in collect(outneighbors(model_graph,k))
+    #         child = get_node(model_graph,v)
+    #         if haskey(model.models,model_name(GraphUtils.node_val(child))) # is_submodel
+    #             sub_model_id = model_name(GraphUtils.node_val(child))
+    #             np = duplicate_subtree!(model_graph,sub_model_id)
+    #             add_edge!(model_graph,node,np)
+    #             rem_edge!(model_graph,node,child)
+    #         end
+    #     end
+    # end
+    return model_graph
+end
+
 
 end
