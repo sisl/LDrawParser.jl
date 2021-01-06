@@ -20,3 +20,5 @@ print(model_tree,v->summary(v.val),"\t")
 node = get_node(model_tree,"20009 - Turret.ldr-2")
 
 sched = LDrawParser.construct_model_schedule(model)
+
+LDrawParser.extract_single_model(sched,"20009 - AT-TE Walker.mpd")
