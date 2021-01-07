@@ -1,5 +1,6 @@
 using LDrawParser
 using LightGraphs, GraphUtils
+using GeometryBasics, CoordinateTransformations, Rotations
 
 filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","ATTEWalker.mpd")
 # filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","Millennium Falcon.mpd")
@@ -7,8 +8,13 @@ model = parse_ldraw_file(filename)
 LDrawParser.populate_part_geometry!(model)
 model
 
+
+
+
+
 # k = "44728.dat"
 k = "43710.dat"
+model.parts[k]
 geometry = LDrawParser.extract_geometry(model.parts[k])
 points = LDrawParser.extract_points(model.parts[k])
 

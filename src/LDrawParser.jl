@@ -3,6 +3,7 @@ module LDrawParser
 using LightGraphs
 using GraphUtils
 using GeometryBasics
+using Rotations, CoordinateTransformations
 using Parameters
 
 export
@@ -33,16 +34,6 @@ function find_part_file(name,library=get_part_library_dir())
             end
         end
     end
-    # for d in directories
-    #     p = joinpath(d,name)
-    #     if isfile(p)
-    #         return p
-    #     end
-    #     p = joinpath(d,lowercase(name))
-    #     if isfile(p)
-    #         return p
-    #     end
-    # end
     println("Part file ",name," not found in library at ",library)
 end
 
@@ -196,19 +187,6 @@ function extract_points(m::DATModel)
     pts
 end
 
-# """
-#     LDRModel
-#
-# Encodes the LDraw information stored in a LDR file.
-# """
-# struct LDRModel
-#     id
-#     name
-#     steps::Vector{BuildingStep}
-#     parts::Vector{DATModel}
-# end
-
-
 """
     MPDModel
 
@@ -293,7 +271,6 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
             if length(line) == 0
                 continue
             end
-            # split_line = split(line," ")
             split_line = parse_line(line)
             if isempty(split_line[1])
                 continue
@@ -303,6 +280,7 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
                 state = read_meta_line!(model,state,split_line)
             elseif code == SUB_FILE_REF
                 state = read_sub_file_ref!(model,state,split_line)
+            # Geometry
             elseif code == LINE
                 state = read_line!(model,state,split_line)
             elseif code == TRIANGLE
@@ -328,43 +306,6 @@ end
 parse_ldraw_file(io) = parse_ldraw_file!(MPDModel(),io)
 parse_color(c) = parse(Int,c)
 
-export populate_part_geometry!
-
-"""
-    populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
-
-Populate `model` with geometry (from ".dat" files only) of all parts that belong
-to model and whose names are included in `part_keys`.
-"""
-function populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
-    excluded_keys = setdiff(Set(collect(keys(model.parts))), part_keys)
-    explored = Set{String}()
-    while !isempty(part_keys)
-        while !isempty(part_keys)
-            partfile = pop!(part_keys)
-            populate_part_geometry!(model,partfile)
-            push!(explored,partfile)
-        end
-        part_keys = setdiff(Set(collect(keys(model.parts))),union(explored,excluded_keys))
-    end
-    return model
-end
-function populate_part_geometry!(model,partfile::String)
-    state = LDrawParser.MPDModelState(active_part=partfile)
-    if splitext(partfile)[end] == ".dat"
-        println("PART FILE ",partfile)
-        part = model.parts[partfile]
-        if part.populated.status
-            println("Geometry already populated for part ",partfile)
-            return false
-        else
-            parse_ldraw_file!(model,find_part_file(partfile),state)
-            part.populated.status = true
-            return true
-        end
-    end
-end
-
 """
     read_meta_line(model,state,line)
 
@@ -377,8 +318,7 @@ parser to close the current build step and begin a new one.
 function read_meta_line!(model,state,line)
     @assert parse(Int,line[1]) == META
     if length(line) < 2
-        # usually this means the end of the file
-        # println("Returning because length(line) < 2")
+        println("Returning because length(line) < 2. Usually this means the end of the file")
         return state
     end
     cmd = line[2]
@@ -389,7 +329,6 @@ function read_meta_line!(model,state,line)
             state = set_new_active_part!(model,state,filename)
         elseif ext == ".mpd" || ext == ".ldr"
             state = set_new_active_model!(model,state,filename)
-            # state = set_new_active_part!(model,state,filename)
         end
     elseif cmd == "STEP"
         set_new_active_building_step!(model,state)
@@ -507,6 +446,53 @@ function read_optional_line!(model,state,line)
             Line(p3,p4)
         ))
     return state
+end
+
+
+export populate_part_geometry!
+
+"""
+    populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
+
+Populate `model` with geometry (from ".dat" files only) of all parts that belong
+to model and whose names are included in `part_keys`.
+"""
+function populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
+    excluded_keys = setdiff(Set(collect(keys(model.parts))), part_keys)
+    explored = Set{String}()
+    while !isempty(part_keys)
+        while !isempty(part_keys)
+            partfile = pop!(part_keys)
+            populate_part_geometry!(model,partfile)
+            push!(explored,partfile)
+        end
+        part_keys = setdiff(Set(collect(keys(model.parts))),union(explored,excluded_keys))
+    end
+    return model
+end
+function populate_part_geometry!(model,partfile::String)
+    state = LDrawParser.MPDModelState(active_part=partfile)
+    if splitext(partfile)[end] == ".dat"
+        println("PART FILE ",partfile)
+        part = model.parts[partfile]
+        if part.populated.status
+            println("Geometry already populated for part ",partfile)
+            return false
+        else
+            parse_ldraw_file!(model,find_part_file(partfile),state)
+            part.populated.status = true
+            return true
+        end
+    end
+end
+
+function (t::AffineMap)(g::G) where {G<:GeometryBasics.Ngon}
+    G(map(t,g.points))
+end
+(t::AffineMap)(g::G) where {G<:NgonElement} = G(g.color,t(g.geom))
+(t::AffineMap)(g::G) where {G<:OptionalLineElement} = G(g.color,t(g.geom),t(g.control_pts))
+function Base.:(*)(r::Rotation,g::G) where {G<:GeometryBasics.Ngon}
+    G(map(p->r*p,g.points))
 end
 
 ################################################################################
