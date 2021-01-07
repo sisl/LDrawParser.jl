@@ -18,16 +18,31 @@ end
 
 function find_part_file(name,library=get_part_library_dir())
     directories = [joinpath(library,"p"),joinpath(library,"parts")]
-    for d in directories
-        p = joinpath(d,name)
-        if isfile(p)
-            return p
-        end
-        p = joinpath(d,lowercase(name))
-        if isfile(p)
-            return p
+    directories = Vector{String}()
+    for (root,dirs,_) in walkdir(library)
+        for dir in dirs
+            push!(directories,joinpath(root,dir)) # path to directories
+            d = joinpath(root,dir)
+            p = joinpath(d,name)
+            if isfile(p)
+                return p
+            end
+            p = joinpath(d,lowercase(name))
+            if isfile(p)
+                return p
+            end
         end
     end
+    # for d in directories
+    #     p = joinpath(d,name)
+    #     if isfile(p)
+    #         return p
+    #     end
+    #     p = joinpath(d,lowercase(name))
+    #     if isfile(p)
+    #         return p
+    #     end
+    # end
     println("Part file ",name," not found in library at ",library)
 end
 
@@ -66,7 +81,7 @@ Represents optional line geometry from an LDraw file
 """
 struct OptionalLineElement
     color::Int
-    line::Line
+    geom::Line
     control_pts::Line
 end
 
@@ -117,7 +132,7 @@ end
 model_name(r::SubModelPlan) = r.name
 n_build_steps(m::SubModelPlan) = length(m.steps)
 n_components(m::SubModelPlan) = sum(map(n_lines,m.steps))
-Base.summary(n::SubModelPlan) = string(model_name(n),": ",
+Base.summary(n::SubModelPlan) = string("SubModelPlan: ",model_name(n),": ",
     n_build_steps(n)," building steps, ",n_components(n)," components")
 
 export
@@ -157,6 +172,29 @@ struct DATModel
     )
 end
 model_name(r::DATModel) = r.name
+function extract_geometry(m::DATModel)
+    elements = Vector{GeometryBasics.Ngon}()
+    for vec in (
+            m.line_geometry,
+            m.triangle_geometry,
+            m.quadrilateral_geometry,
+            m.optional_line_geometry
+        )
+        for e in vec
+            push!(elements,e.geom)
+        end
+    end
+    elements
+end
+function extract_points(m::DATModel)
+    pts = Vector{Point3{Float64}}()
+    for e in extract_geometry(m)
+        for pt in e.points
+            push!(pts,pt)
+        end
+    end
+    pts
+end
 
 # """
 #     LDRModel
@@ -657,11 +695,35 @@ function extract_single_model(sched::S,model_key) where {S<:MPDModelGraph}
     new_sched
 end
 
+GraphUtils.validate_edge(::SubModelPlan,::SubFileRef) = true
+GraphUtils.validate_edge(::BuildingStep,::SubModelPlan) = true
+GraphUtils.validate_edge(::BuildingStep,::BuildingStep) = true
+GraphUtils.validate_edge(::BuildingStep,::SubFileRef) = true
+GraphUtils.validate_edge(::SubFileRef,::BuildingStep) = true
 
+GraphUtils.eligible_successors(::SubFileRef) = Dict(BuildingStep=>1)
+GraphUtils.eligible_predecessors(::SubFileRef) = Dict(BuildingStep=>1,SubModelPlan=>1)
+GraphUtils.required_successors(::SubFileRef) = Dict(BuildingStep=>1)
+GraphUtils.required_predecessors(::SubFileRef) = Dict()
+
+GraphUtils.eligible_successors(::SubModelPlan) = Dict(SubFileRef=>1)
+GraphUtils.eligible_predecessors(::SubModelPlan) = Dict(BuildingStep=>1)
+GraphUtils.required_successors(::SubModelPlan) = Dict()
+GraphUtils.required_predecessors(::SubModelPlan) = Dict(BuildingStep=>1)
+
+GraphUtils.eligible_successors(::BuildingStep) = Dict(SubFileRef=>typemax(Int),SubModelPlan=>1,BuildingStep=>1)
+GraphUtils.eligible_predecessors(n::BuildingStep) = Dict(SubFileRef=>n_lines(n),BuildingStep=>1)
+GraphUtils.required_successors(::BuildingStep) = Dict(Union{SubModelPlan,BuildingStep}=>1)
+GraphUtils.required_predecessors(n::BuildingStep) = Dict(SubFileRef=>n_lines(n))
+
+"""
+    construct_assembly_graph(model)
+
+Construct an assembly graph, where each `SubModelPlan` has an outgoing edge to
+each `SubFileRef` pointing to one of its components.
+"""
 function construct_assembly_graph(model)
     NODE_VAL_TYPE=Union{SubModelPlan,SubFileRef}
-    # ID_TYPE=String
-    # model_graph = GraphUtils.NGraph{DiGraph,NODE_TYPE,String}()
     model_graph = MPDModelGraph{NODE_VAL_TYPE,String}()
     for (k,m) in model.models
         n = add_node!(model_graph,m,k)
@@ -672,18 +734,6 @@ function construct_assembly_graph(model)
             end
         end
     end
-    # for (k,m) in model.models
-    #     node = get_node(model_graph,k)
-    #     for v in collect(outneighbors(model_graph,k))
-    #         child = get_node(model_graph,v)
-    #         if haskey(model.models,model_name(GraphUtils.node_val(child))) # is_submodel
-    #             sub_model_id = model_name(GraphUtils.node_val(child))
-    #             np = duplicate_subtree!(model_graph,sub_model_id)
-    #             add_edge!(model_graph,node,np)
-    #             rem_edge!(model_graph,node,child)
-    #         end
-    #     end
-    # end
     return model_graph
 end
 
