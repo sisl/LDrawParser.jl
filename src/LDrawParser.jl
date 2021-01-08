@@ -89,8 +89,8 @@ const FILE_TYPE_HEADERS = Set{String}([
 const META_COMMAND_DICT = Dict{String,META_COMMAND}(
     "FILE"          =>FILE,
     "STEP"          =>STEP,
-    # "NAME"          =>NAME,
-    # "NAME:"          =>NAME,
+    "NAME"          =>NAME,
+    "NAME:"          =>NAME,
     [k=>FILE_TYPE_DECLARATION for k in FILE_TYPE_HEADERS]...
 )
 
@@ -105,7 +105,9 @@ const SplitLine = Vector{A} where {A<:AbstractString}
 
 parse_file_type(k::AbstractString)      = get(FILE_TYPE_DICT,uppercase(k), NONE_FILE_TYPE)
 parse_command_code(k::AbstractString)   = COMMAND_CODE(parse(Int,k))
-parse_meta_command(k::AbstractString)   = get(META_COMMAND_DICT,uppercase(k), OTHER_META_COMMAND)
+function parse_meta_command(k::AbstractString)
+    get(META_COMMAND_DICT,uppercase(k), OTHER_META_COMMAND)
+end
 for op in [:parse_file_type, :parse_command_code, :parse_meta_command]
     @eval $op(split_line::SplitLine) = $op(split_line[1])
 end
@@ -302,8 +304,8 @@ end
 function get_part(m::MPDModel,k)
     if haskey(m.parts,k)
         return m.parts[k]
-    elseif haskey(m.subparts,k)
-        return m.parts[k]
+    elseif haskey(m.sub_parts,k)
+        return m.sub_parts[k]
     end
     return nothing
 end
@@ -316,6 +318,9 @@ function add_sub_part!(m::MPDModel,k)
     @assert !has_part(m,k)
     m.sub_parts[k] = DATModel(k)
 end
+part_keys(m::MPDModel) = keys(m.parts)
+sub_part_keys(m::MPDModel) = keys(m.sub_parts)
+all_part_keys(m::MPDModel) = Base.Iterators.flatten((part_keys(m),sub_part_keys(m)))
 
 struct LDRGeometry
     lines::Vector{NgonElement{Line{3,Float64}}}
@@ -358,9 +363,13 @@ function active_submodel(model::MPDModel,state)
     @assert !isempty(model.models)
     return model.models[state.active_model]
 end
-function set_new_active_model!(model::MPDModel,state,name)
-    @assert !haskey(model.models,name)
-    model.models[name] = SubModelPlan(name)
+function set_active_model!(model::MPDModel,state,name)
+    # @assert !haskey(model.models,name)
+    if !haskey(model.models,name)
+        model.models[name] = SubModelPlan(name)
+    else
+        @warn "$name is already in model!"
+    end
     return MPDModelState(state,active_model=name)
 end
 function active_building_step(model::MPDModel,state)
@@ -396,16 +405,20 @@ function add_sub_file_placement!(model::MPDModel,state,ref)
     # TODO figure out how to place a subfile that is not part of a build step,
     # but is rather (presumably) a subfile of a .dat model
     if state.file_type == MODEL
-        if state.active_model != ""
+        if !isempty(state.active_model) # != ""
             push!(active_building_step(model,state),ref)
         end
     else
-        if state.active_part != ""
+        if !isempty(state.active_part) # != ""
             push!(active_part(model,state).subfiles,ref)
         end
     end
-    if !haskey(model.parts,ref.file)
-        add_part!(model,ref.file)
+    if !has_part(model,ref.file)
+        if isempty(state.active_part)
+            add_part!(model,ref.file)
+        else
+            add_sub_part!(model,ref.file)
+        end
     end
     return state
 end
@@ -429,6 +442,8 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
                 continue
             end
             code = parse_command_code(split_line)
+            @info "LINE: $line"
+            @info "code: $code"
             if code == META
                 state = read_meta_line!(model,state,split_line)
             elseif code == SUB_FILE_REF
@@ -452,11 +467,11 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
     return model
 end
 function parse_ldraw_file!(model,filename::String,args...)
-    open(filename,"r") do io
+    open(find_part_file(filename),"r") do io
         parse_ldraw_file!(model,io,args...)
     end
 end
-parse_ldraw_file(io) = parse_ldraw_file!(MPDModel(),io)
+parse_ldraw_file(io,args...) = parse_ldraw_file!(MPDModel(),io,args...)
 parse_color(c) = parse(Int,c)
 
 
@@ -477,14 +492,20 @@ function read_meta_line!(model,state,line)
     end
     # cmd = line[2]
     cmd = parse_meta_command(line[2])
-    if cmd == FILE
+    @info "cmd: $cmd"
+    if cmd == FILE || cmd == NAME
         filename = join(line[3:end]," ")
         ext = lowercase(splitext(filename)[2])
-        @info "ext = $ext"
         if ext == ".dat"
             state = set_active_part!(model,state,filename)
+            if state.file_type == NONE_FILE_TYPE
+                state.file_type = PART
+            end
         elseif ext == ".mpd" || ext == ".ldr"
-            state = set_new_active_model!(model,state,filename)
+            state = set_active_model!(model,state,filename)
+            if state.file_type == NONE_FILE_TYPE
+                state.file_type = MODEL
+            end
         end
         @info "file = $filename"
     elseif cmd == STEP
@@ -614,7 +635,7 @@ end
 
 export populate_part_geometry!
 
-function populate_part_geometry!(model,frontier=Set(collect(keys(model.parts))))
+function populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
     explored = Set{String}()
     while !isempty(frontier)
         subcomponent = pop!(frontier)
@@ -625,7 +646,8 @@ function populate_part_geometry!(model,frontier=Set(collect(keys(model.parts))))
             continue
         end
         parse_ldraw_file!(model,partfile,MPDModelState(active_part=subcomponent))
-        for k in keys(model.parts)
+        # for k in keys(model.parts)
+        for k in all_part_keys(model)
             if !(k in explored)
                 push!(frontier,k)
             end
@@ -636,16 +658,26 @@ function populate_part_geometry!(model,frontier=Set(collect(keys(model.parts))))
     explored = Set{String}()
     while !isempty(frontier)
         name = pop!(frontier)
-        part = model.parts[name]
+        part = get_part(model,name)
         recurse_part_geometry!(model,part,explored)
         setdiff!(frontier,explored)
     end
     model
 end
 function recurse_part_geometry!(model,part::DATModel,explored)
+    if get_status(part.populated)
+        push!(explored,part.name)
+        return part
+    end
+    if part.name == "43711.dat"
+        @warn "part $(part.name) has $(length(part.subfiles)) subfiles ..."
+    end
     for ref in part.subfiles
-        if haskey(model.parts,ref.file) && (get_status(part.populated) == false)
-            subpart = model.parts[ref.file]
+        if has_part(model,ref.file)
+            if part.name == "43711.dat"
+                @warn "subfile $(ref.file) of $(part.name) ..."
+            end
+            subpart = get_part(model,ref.file)
             if !(ref.file in explored)
                 recurse_part_geometry!(model,subpart,explored)
             end

@@ -10,16 +10,18 @@ filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","ATTEWalker.mpd")
 model = parse_ldraw_file(filename)
 # load geometry
 LDrawParser.populate_part_geometry!(model)
+parse_ldraw_file("43711.dat",
+    LDrawParser.MPDModelState(
+        file_type=LDrawParser.PART,
+        active_part="43711.dat"
+        ))
+p = model.parts["43711.dat"]
+p.populated.status = false
 
-LDrawParser.recurse_part_geometry!(model,model.parts["43710.dat"],Set())
-# k = "44728.dat"
-# k = "43710.dat"
-# model.parts[k]
-# geometry = LDrawParser.extract_geometry(model.parts[k])
-# points = LDrawParser.extract_points(model.parts[k])
-#
+LDrawParser.recurse_part_geometry!(model,p,Set())
+
+
 part_keys = sort(collect(keys(model.parts))[1:10])
-# part_keys = ["43710.dat"]
 parts = Dict(k=>model.parts[k] for k in part_keys)
 
 transport_model = (
