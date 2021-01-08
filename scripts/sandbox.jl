@@ -8,9 +8,33 @@ global_logger(SimpleLogger(stderr, Logging.Debug))
 filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","ATTEWalker.mpd")
 # filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","Millennium Falcon.mpd")
 model = parse_ldraw_file(filename)
+# load geometry
+# explored = Set{String}()
+# frontier = Set(collect(keys(model.parts)))
+# while !isempty(frontier)
+#     subcomponent = pop!(frontier)
+#     push!(explored,subcomponent)
+#     partfile = find_part_file(subcomponent)
+#     if partfile === nothing
+#         @warn "Can't find file $subcomponent. Skipping..."
+#         continue
+#     end
+#     parse_ldraw_file!(model,find_part_file(subcomponent),
+#         LDrawParser.MPDModelState(
+#             active_model="",
+#             active_part=subcomponent
+#         )
+#     )
+#     for k in keys(model.parts)
+#         if !(k in explored)
+#             push!(frontier,k)
+#         end
+#     end
+# end
+# model
+# go back through and recursively load geometry from subcomponents
 
 LDrawParser.populate_part_geometry!(model)
-model
 
 
 

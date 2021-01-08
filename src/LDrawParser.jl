@@ -33,6 +33,7 @@ function find_part_file(name,library=get_part_library_dir())
         end
     end
     println("Part file ",name," not found in library at ",library)
+    return nothing
 end
 
 @enum FILE_TYPE begin
@@ -143,6 +144,10 @@ struct SubFileRef
 end
 Base.summary(s::SubFileRef) = string("SubFileRef → ",s.file," : ",s.pos)
 model_name(r::SubFileRef) = r.file
+function build_transform(ref::SubFileRef)
+    @warn "Need to ensure account for the weird LDraw coordinate system at some point"
+    Translation(ref.pos[1],ref.pos[2],ref.pos[3]) ∘ LinearMap(ref.rot)
+end
 
 """
     BuildingStep
@@ -239,6 +244,20 @@ function extract_points(m::DATModel)
     end
     pts
 end
+function incorporate_geometry!(m::DATModel,ref::SubFileRef,child::DATModel)
+    t = build_transform(ref)
+    for (parent_geometry,child_geometry) in zip(
+            (m.line_geometry, m.triangle_geometry, m.quadrilateral_geometry,
+                m.optional_line_geometry),
+            (child.line_geometry, child.triangle_geometry, child.quadrilateral_geometry,
+                child.optional_line_geometry)
+        )
+        for element in child_geometry
+            push!(parent_geometry, t(element))
+        end
+    end
+    return m
+end
 
 """
     MPDModel
@@ -248,13 +267,26 @@ includes a submodel tree (stored implicitly in a dictionary that maps model_name
 to SubModelPlan) and a part list. The first model in MPDModel.models is the main
 model. All the following are submodels of that model and/or each other.
 """
-struct MPDModel
-    models::Dict{String,SubModelPlan} # each file is a list of steps
-    parts::Dict{String,DATModel}
-    # steps
+struct MPDModel #<: AbstractCustomNEDiGraph{CustomNode{Union{SubModelPlan,DATModel},String},CustomEdge{SubModelRef,String},String}
+    models      ::Dict{String,SubModelPlan} # each file is a list of steps
+    parts       ::Dict{String,DATModel}
+    # part_graph  ::NEGraph{DiGraph,Union{SubModelPlan,DATModel},SubFileRef,String}
+    # graph       ::DiGraph
+    # nodes       ::Vector{CustomNode{Union{SubModelPlan,DATModel},String}}
+    # vtx_map     ::Dict{String,Int}
+    # vtx_ids     ::Vector{String}
+    # inedges     ::Vector{Dict{Int,CustomEdge{SubModelRef,String}}}
+    # outedges    ::Vector{Dict{Int,CustomEdge{SubModelRef,String}}}
     MPDModel() = new(
         Dict{String,SubModelPlan}(),
-        Dict{String,DATModel}()
+        Dict{String,DATModel}(),
+        # NEGraph{DiGraph,DATModel,SubFileRef,String}()
+        # DiGraph(),
+        # Vector{CustomNode{Union{SubModelPlan,DATModel},String}}(),
+        # Dict{String,Int}(),
+        # Vector{String}(),
+        # Vector{Dict{Int,CustomEdge{SubModelRef,String}}}(),
+        # Vector{Dict{Int,CustomEdge{SubModelRef,String}}}(),
     )
 end
 
@@ -552,40 +584,89 @@ end
 
 export populate_part_geometry!
 
-"""
-    populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
+# """
+#     populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
+#
+# Populate `model` with geometry (from ".dat" files only) of all parts that belong
+# to model and whose names are included in `part_keys`.
+# """
+# function populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
+#     excluded_keys = setdiff(Set(collect(keys(model.parts))), part_keys)
+#     explored = Set{String}()
+#     while !isempty(part_keys)
+#         while !isempty(part_keys)
+#             partfile = pop!(part_keys)
+#             populate_part_geometry!(model,partfile)
+#             push!(explored,partfile)
+#         end
+#         part_keys = setdiff(Set(collect(keys(model.parts))),union(explored,excluded_keys))
+#     end
+#     return model
+# end
+# function populate_part_geometry!(model,partfile::String)
+#     state = LDrawParser.MPDModelState(active_part=partfile)
+#     if splitext(partfile)[end] == ".dat"
+#         println("PART FILE ",partfile)
+#         part = model.parts[partfile]
+#         if part.populated.status
+#             println("Geometry already populated for part ",partfile)
+#             return false
+#         else
+#             parse_ldraw_file!(model,find_part_file(partfile),state)
+#             part.populated.status = true
+#             return true
+#         end
+#     end
+# end
 
-Populate `model` with geometry (from ".dat" files only) of all parts that belong
-to model and whose names are included in `part_keys`.
-"""
-function populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
-    excluded_keys = setdiff(Set(collect(keys(model.parts))), part_keys)
+function populate_part_geometry!(model,frontier=Set(collect(keys(model.parts))))
     explored = Set{String}()
-    while !isempty(part_keys)
-        while !isempty(part_keys)
-            partfile = pop!(part_keys)
-            populate_part_geometry!(model,partfile)
-            push!(explored,partfile)
+    while !isempty(frontier)
+        subcomponent = pop!(frontier)
+        push!(explored,subcomponent)
+        partfile = find_part_file(subcomponent)
+        if partfile === nothing
+            @warn "Can't find file $subcomponent. Skipping..."
+            continue
         end
-        part_keys = setdiff(Set(collect(keys(model.parts))),union(explored,excluded_keys))
-    end
-    return model
-end
-function populate_part_geometry!(model,partfile::String)
-    state = LDrawParser.MPDModelState(active_part=partfile)
-    if splitext(partfile)[end] == ".dat"
-        println("PART FILE ",partfile)
-        part = model.parts[partfile]
-        if part.populated.status
-            println("Geometry already populated for part ",partfile)
-            return false
-        else
-            parse_ldraw_file!(model,find_part_file(partfile),state)
-            part.populated.status = true
-            return true
+        parse_ldraw_file!(model,find_part_file(subcomponent),
+            LDrawParser.MPDModelState(
+                active_model="",
+                active_part=subcomponent
+            )
+        )
+        for k in keys(model.parts)
+            if !(k in explored)
+                push!(frontier,k)
+            end
         end
     end
+    # go back through and recursively load geometry from subcomponents
+    frontier = explored
+    explored = Set{String}()
+    while !isempty(frontier)
+        name = pop!(frontier)
+        part = model.parts[name]
+        recurse_part_geometry!(model,part,explored)
+        setdiff!(frontier,explored)
+    end
+    model
 end
+function recurse_part_geometry!(model,part::DATModel,explored)
+    if !isempty(part.subfiles)
+        for ref in part.subfiles
+            if haskey(model.parts,ref.file) && !(ref.file in explored)
+                subpart = model.parts[ref.file]
+                recurse_part_geometry!(model,subpart,explored)
+                incorporate_geometry!(part,ref,subpart)
+            end
+        end
+    end
+    push!(explored,part.name)
+    part
+end
+
+
 
 function (t::AffineMap)(g::G) where {G<:GeometryBasics.Ngon}
     G(map(t,g.points))
