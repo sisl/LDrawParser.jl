@@ -5,6 +5,7 @@ using GraphUtils
 using GeometryBasics
 using Rotations, CoordinateTransformations
 using Parameters
+using Logging
 
 export
     get_part_library_dir,
@@ -18,32 +19,76 @@ function set_part_library_dir!(path)
 end
 
 function find_part_file(name,library=get_part_library_dir())
-    directories = [joinpath(library,"p"),joinpath(library,"parts")]
-    directories = Vector{String}()
+    if isfile(name)
+        return name
+    end
     for (root,dirs,_) in walkdir(library)
         for dir in dirs
-            push!(directories,joinpath(root,dir)) # path to directories
             d = joinpath(root,dir)
-            p = joinpath(d,name)
-            if isfile(p)
-                return p
-            end
-            p = joinpath(d,lowercase(name))
-            if isfile(p)
-                return p
+            for p in [joinpath(d,name),joinpath(d,lowercase(name))]
+                if isfile(p)
+                    return p
+                end
             end
         end
     end
     println("Part file ",name," not found in library at ",library)
 end
 
+@enum FILE_TYPE begin
+    MODEL
+    PART
+    SUBPART
+    PRIMITIVE
+    SHORTCUT
+    NONE_FILE_TYPE
+end
+
 # Each line of an LDraw file begins with a number 0-5
-const META          = 0
-const SUB_FILE_REF  = 1
-const LINE          = 2
-const TRIANGLE      = 3
-const QUADRILATERAL = 4
-const OPTIONAL      = 5
+@enum COMMAND_CODE begin
+    META          = 0
+    SUB_FILE_REF  = 1
+    LINE          = 2
+    TRIANGLE      = 3
+    QUADRILATERAL = 4
+    OPTIONAL      = 5
+end
+
+@enum META_COMMAND begin
+    FILE
+    STEP
+    FILE_TYPE_DECLARATION
+    OTHER_META_COMMAND
+end
+
+const FILE_TYPE_DICT = Dict{String,FILE_TYPE}(
+    "MODEL"                     => MODEL,
+    "PART"                      => PART,
+    "UNOFFICIAL_PART"           => PART,
+    "SUBPART"                   => SUBPART,
+    "UNOFFICIAL_SUBPART"        => SUBPART,
+    "PRIMITIVE"                 => PRIMITIVE,
+    "8_PRIMITIVE"               => PRIMITIVE,
+    "48_PRIMITIVE"              => PRIMITIVE,
+    "UNOFFICIAL_PRIMITIVE"      => PRIMITIVE,
+    "UNOFFICIAL_8_PRIMITIVE"    => PRIMITIVE,
+    "UNOFFICIAL_48_PRIMITIVE"   => PRIMITIVE,
+    "UNOFFICIAL_SHORTCUT"       => PRIMITIVE,
+    "SHORTCUT"                  => SHORTCUT,
+)
+const FILE_TYPE_HEADERS = Set{String}([
+    "!LDRAW_ORG",
+    "LDRAW_ORG",
+    "OFFICIAL LCAD",
+    "OFFICIAL",
+    "UNOFFICIAL",
+    "UN-OFFICIAL"
+])
+const META_COMMAND_DICT = Dict{String,META_COMMAND}(
+    "FILE"          =>FILE,
+    "STEP"          =>STEP,
+    [k=>FILE_TYPE_DECLARATION for k in FILE_TYPE_HEADERS]...
+)
 
 function parse_line(line)
     if Base.Sys.isunix()
@@ -51,6 +96,14 @@ function parse_line(line)
     end
     split_line = split(line)
     return split_line
+end
+const SplitLine = Vector{A} where {A<:AbstractString}
+
+parse_file_type(k::AbstractString)      = get(FILE_TYPE_DICT,uppercase(k), NONE_FILE_TYPE)
+parse_command_code(k::AbstractString)   = COMMAND_CODE(parse(Int,k))
+parse_meta_command(k::AbstractString)   = get(META_COMMAND_DICT,uppercase(k), OTHER_META_COMMAND)
+for op in [:parse_file_type, :parse_command_code, :parse_meta_command]
+    @eval $op(split_line::SplitLine) = $op(split_line[1])
 end
 
 const Point3D   = Point{3,Float64}
@@ -205,10 +258,38 @@ struct MPDModel
     )
 end
 
-@with_kw struct MPDModelState
+struct LDRGeometry
+    lines::Vector{NgonElement{Line{3,Float64}}}
+    triangles::Vector{NgonElement{Triangle{3,Float64}}}
+    quadrilaterals::Vector{NgonElement{Quadrilateral{3,Float64}}}
+    optional_lines::Vector{OptionalLineElement}
+    populated::Toggle
+    LDRGeometry() = new(
+        Vector{NgonElement{Line{3,Float64}}}(),
+        Vector{NgonElement{Triangle{3,Float64}}}(),
+        Vector{NgonElement{Quadrilateral{3,Float64}}}(),
+        Vector{OptionalLineElement}(),
+        Toggle(false)
+    )
+end
+
+struct LDRModel
+    name::String
+    file_type::FILE_TYPE
+    geometry::LDRGeometry
+    building_steps::Vector{BuildingStep}
+    sub_file_refs::Vector{SubFileRef}
+end
+
+@with_kw_noshow mutable struct MPDModelState
+    file_type::FILE_TYPE = NONE_FILE_TYPE
     active_model::String = ""
     active_part::String = ""
 end
+
+Base.summary(s::MPDModelState) = string(
+"MPDModelState(file_type=$(s.file_type), active_model=$(s.active_model), active_part=$(s.active_part))")
+
 update_state(state::MPDModelState) = MPDModelState(state) # TODO deal with single step macro commands, etc.
 function active_building_step(submodel::SubModelPlan,state)
     @assert !isempty(submodel.steps)
@@ -247,8 +328,17 @@ function set_new_active_part!(model::MPDModel,state,name)
     return MPDModelState(state,active_part=name)
 end
 function add_sub_file_placement!(model::MPDModel,state,ref)
-    if state.active_model != ""
-        push!(active_building_step(model,state),ref)
+    # TODO figure out how to place a subfile that is not part of a build step,
+    # but is rather (presumably) a subfile of a .dat model
+    if state.file_type == MODEL
+        if state.active_model != ""
+            push!(active_building_step(model,state),ref)
+        end
+    else
+        if state.active_part != ""
+            # @info "pushing subfile reference to $(state.active_part)"
+            push!(active_part(model,state).subfiles,ref)
+        end
     end
     if !haskey(model.parts,ref.file)
         model.parts[ref.file] = DATModel(ref.file)
@@ -267,7 +357,10 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
     # state = MPDModelState()
     for line in eachline(io)
         try
-            # @show line
+            # if length(state.active_part) > 0
+            #     @show line
+            #     @show summary(state)
+            # end
             if length(line) == 0
                 continue
             end
@@ -275,7 +368,7 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
             if isempty(split_line[1])
                 continue
             end
-            code = parse(Int,split_line[1])
+            code = parse_command_code(split_line)
             if code == META
                 state = read_meta_line!(model,state,split_line)
             elseif code == SUB_FILE_REF
@@ -302,9 +395,9 @@ function parse_ldraw_file!(model,filename::String,args...)
         parse_ldraw_file!(model,io,args...)
     end
 end
-
 parse_ldraw_file(io) = parse_ldraw_file!(MPDModel(),io)
 parse_color(c) = parse(Int,c)
+
 
 """
     read_meta_line(model,state,line)
@@ -316,13 +409,14 @@ The STEP meta command indicates the end of the current step, which prompts the
 parser to close the current build step and begin a new one.
 """
 function read_meta_line!(model,state,line)
-    @assert parse(Int,line[1]) == META
+    @assert parse_command_code(line[1]) == META
     if length(line) < 2
-        println("Returning because length(line) < 2. Usually this means the end of the file")
+        @info "Returning because length(line) < 2. Usually this means the end of the file"
         return state
     end
-    cmd = line[2]
-    if cmd == "FILE"
+    # cmd = line[2]
+    cmd = parse_meta_command(line[2])
+    if cmd == FILE
         filename = join(line[3:end]," ")
         ext = splitext(filename)[2]
         if ext == ".dat"
@@ -330,8 +424,15 @@ function read_meta_line!(model,state,line)
         elseif ext == ".mpd" || ext == ".ldr"
             state = set_new_active_model!(model,state,filename)
         end
-    elseif cmd == "STEP"
+        @info "file = $filename"
+    elseif cmd == STEP
         set_new_active_building_step!(model,state)
+    elseif cmd == FILE_TYPE_DECLARATION
+        state.file_type = parse_file_type(line[3])
+        if state.file_type == NONE_FILE_TYPE
+            @debug "file type not resolved on line : $line"
+        end
+        @info "file_type=$state.file_type"
     else
         # TODO Handle other META commands, especially BFC
     end
@@ -344,7 +445,7 @@ end
 Receives a SUB_FILE_REF line (with the leading SUB_FILE_REF id stripped)
 """
 function read_sub_file_ref!(model,state,line)
-    @assert parse(Int,line[1]) == SUB_FILE_REF
+    @assert parse_command_code(line[1]) == SUB_FILE_REF
     @assert length(line) >= 15 "$line"
     color = parse_color(line[2])
     # coordinate of part
@@ -370,7 +471,7 @@ end
 For reading lines of type LINE
 """
 function read_line!(model,state,line)
-    @assert parse(Int,line[1]) == LINE
+    @assert parse_command_code(line[1]) == LINE
     @assert length(line) == 8 "$line"
     color = parse_color(line[2])
     p1 = Point3D(parse.(Float64,line[3:5]))
@@ -389,7 +490,7 @@ end
 For reading lines of type TRIANGLE
 """
 function read_triangle!(model,state,line)
-    @assert parse(Int,line[1]) == TRIANGLE
+    @assert parse_command_code(line[1]) == TRIANGLE
     @assert length(line) == 11 "$line"
     color = parse_color(line[2])
     p1 = Point3D(parse.(Float64,line[3:5]))
@@ -409,7 +510,7 @@ end
 For reading lines of type QUADRILATERAL
 """
 function read_quadrilateral!(model,state,line)
-    @assert parse(Int,line[1]) == QUADRILATERAL
+    @assert parse_command_code(line[1]) == QUADRILATERAL
     @assert length(line) == 14 "$line"
     color = parse_color(line[2])
     p1 = Point3D(parse.(Float64,line[3:5]))
@@ -430,7 +531,7 @@ end
 For reading lines of type OPTIONAL
 """
 function read_optional_line!(model,state,line)
-    @assert parse(Int,line[1]) == OPTIONAL
+    @assert parse_command_code(line[1]) == OPTIONAL
     @assert length(line) == 14
     color = parse_color(line[2])
     p1 = Point3D(parse.(Float64,line[3:5]))

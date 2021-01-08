@@ -1,10 +1,14 @@
 using LDrawParser
 using LightGraphs, GraphUtils
+using Logging
 using GeometryBasics, CoordinateTransformations, Rotations
+
+global_logger(SimpleLogger(stderr, Logging.Debug))
 
 filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","ATTEWalker.mpd")
 # filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","Millennium Falcon.mpd")
 model = parse_ldraw_file(filename)
+
 LDrawParser.populate_part_geometry!(model)
 model
 
