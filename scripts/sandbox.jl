@@ -3,50 +3,23 @@ using LightGraphs, GraphUtils
 using Logging
 using GeometryBasics, CoordinateTransformations, Rotations
 
-global_logger(SimpleLogger(stderr, Logging.Debug))
+# global_logger(SimpleLogger(stderr, Logging.Debug))
 
 filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","ATTEWalker.mpd")
 # filename = joinpath(dirname(pathof(LDrawParser)),"..","assets","Millennium Falcon.mpd")
 model = parse_ldraw_file(filename)
 # load geometry
-# explored = Set{String}()
-# frontier = Set(collect(keys(model.parts)))
-# while !isempty(frontier)
-#     subcomponent = pop!(frontier)
-#     push!(explored,subcomponent)
-#     partfile = find_part_file(subcomponent)
-#     if partfile === nothing
-#         @warn "Can't find file $subcomponent. Skipping..."
-#         continue
-#     end
-#     parse_ldraw_file!(model,find_part_file(subcomponent),
-#         LDrawParser.MPDModelState(
-#             active_model="",
-#             active_part=subcomponent
-#         )
-#     )
-#     for k in keys(model.parts)
-#         if !(k in explored)
-#             push!(frontier,k)
-#         end
-#     end
-# end
-# model
-# go back through and recursively load geometry from subcomponents
-
 LDrawParser.populate_part_geometry!(model)
 
-
-
-
-
+LDrawParser.recurse_part_geometry!(model,model.parts["43710.dat"],Set())
 # k = "44728.dat"
-k = "43710.dat"
-model.parts[k]
-geometry = LDrawParser.extract_geometry(model.parts[k])
-points = LDrawParser.extract_points(model.parts[k])
-
+# k = "43710.dat"
+# model.parts[k]
+# geometry = LDrawParser.extract_geometry(model.parts[k])
+# points = LDrawParser.extract_points(model.parts[k])
+#
 part_keys = sort(collect(keys(model.parts))[1:10])
+# part_keys = ["43710.dat"]
 parts = Dict(k=>model.parts[k] for k in part_keys)
 
 transport_model = (

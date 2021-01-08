@@ -57,6 +57,7 @@ end
 
 @enum META_COMMAND begin
     FILE
+    NAME
     STEP
     FILE_TYPE_DECLARATION
     OTHER_META_COMMAND
@@ -88,6 +89,8 @@ const FILE_TYPE_HEADERS = Set{String}([
 const META_COMMAND_DICT = Dict{String,META_COMMAND}(
     "FILE"          =>FILE,
     "STEP"          =>STEP,
+    # "NAME"          =>NAME,
+    # "NAME:"          =>NAME,
     [k=>FILE_TYPE_DECLARATION for k in FILE_TYPE_HEADERS]...
 )
 
@@ -145,7 +148,7 @@ end
 Base.summary(s::SubFileRef) = string("SubFileRef → ",s.file," : ",s.pos)
 model_name(r::SubFileRef) = r.file
 function build_transform(ref::SubFileRef)
-    @warn "Need to ensure account for the weird LDraw coordinate system at some point"
+    # @warn "Need to account for the weird LDraw coordinate system at some point"
     Translation(ref.pos[1],ref.pos[2],ref.pos[3]) ∘ LinearMap(ref.rot)
 end
 
@@ -194,6 +197,10 @@ const Quadrilateral{Dim,T} = GeometryBasics.Ngon{Dim,T,4,Point{Dim,T}}
 mutable struct Toggle
     status::Bool
 end
+function set_status!(t::Toggle,val=true)
+    t.status = val
+end
+get_status(t::Toggle) = copy(t.status)
 
 """
     DATModel
@@ -245,6 +252,7 @@ function extract_points(m::DATModel)
     pts
 end
 function incorporate_geometry!(m::DATModel,ref::SubFileRef,child::DATModel)
+    # @info "incorporating geometry from $(child.name) into $(m.name)"
     t = build_transform(ref)
     for (parent_geometry,child_geometry) in zip(
             (m.line_geometry, m.triangle_geometry, m.quadrilateral_geometry,
@@ -270,6 +278,7 @@ model. All the following are submodels of that model and/or each other.
 struct MPDModel #<: AbstractCustomNEDiGraph{CustomNode{Union{SubModelPlan,DATModel},String},CustomEdge{SubModelRef,String},String}
     models      ::Dict{String,SubModelPlan} # each file is a list of steps
     parts       ::Dict{String,DATModel}
+    sub_parts   ::Dict{String,DATModel}
     # part_graph  ::NEGraph{DiGraph,Union{SubModelPlan,DATModel},SubFileRef,String}
     # graph       ::DiGraph
     # nodes       ::Vector{CustomNode{Union{SubModelPlan,DATModel},String}}
@@ -280,6 +289,7 @@ struct MPDModel #<: AbstractCustomNEDiGraph{CustomNode{Union{SubModelPlan,DATMod
     MPDModel() = new(
         Dict{String,SubModelPlan}(),
         Dict{String,DATModel}(),
+        Dict{String,DATModel}(),
         # NEGraph{DiGraph,DATModel,SubFileRef,String}()
         # DiGraph(),
         # Vector{CustomNode{Union{SubModelPlan,DATModel},String}}(),
@@ -288,6 +298,23 @@ struct MPDModel #<: AbstractCustomNEDiGraph{CustomNode{Union{SubModelPlan,DATMod
         # Vector{Dict{Int,CustomEdge{SubModelRef,String}}}(),
         # Vector{Dict{Int,CustomEdge{SubModelRef,String}}}(),
     )
+end
+function get_part(m::MPDModel,k)
+    if haskey(m.parts,k)
+        return m.parts[k]
+    elseif haskey(m.subparts,k)
+        return m.parts[k]
+    end
+    return nothing
+end
+has_part(m::MPDModel,k) = haskey(m.parts,k) || haskey(m.sub_parts,k)
+function add_part!(m::MPDModel,k)
+    @assert !has_part(m,k)
+    m.parts[k] = DATModel(k)
+end
+function add_sub_part!(m::MPDModel,k)
+    @assert !has_part(m,k)
+    m.sub_parts[k] = DATModel(k)
 end
 
 struct LDRGeometry
@@ -350,13 +377,19 @@ function set_new_active_building_step!(model::MPDModel,state)
     return model
 end
 function active_part(model::MPDModel,state)
-    @assert !isempty(model.parts)
-    return model.parts[state.active_part]
+    # @assert !isempty(model.parts)
+    @assert has_part(model,state.active_part)
+    # return model.parts[state.active_part]
+    return get_part(model,state.active_part)
 end
-function set_new_active_part!(model::MPDModel,state,name)
-    @assert !haskey(model.parts,name) "$name is already in model.parts!"
-    model.parts[name] = DATModel(name)
-    println("Active part = $name")
+function set_active_part!(model::MPDModel,state,name)
+    # @assert !has_part(model,name) "$name is already a part in model!"
+    if !has_part(model,name)
+        add_part!(model,name)
+    else
+        @warn "$name is already a part in model!"
+    end
+    @info "Active part = $name"
     return MPDModelState(state,active_part=name)
 end
 function add_sub_file_placement!(model::MPDModel,state,ref)
@@ -368,12 +401,11 @@ function add_sub_file_placement!(model::MPDModel,state,ref)
         end
     else
         if state.active_part != ""
-            # @info "pushing subfile reference to $(state.active_part)"
             push!(active_part(model,state).subfiles,ref)
         end
     end
     if !haskey(model.parts,ref.file)
-        model.parts[ref.file] = DATModel(ref.file)
+        add_part!(model,ref.file)
     end
     return state
 end
@@ -388,11 +420,7 @@ Args:
 function parse_ldraw_file!(model,io,state = MPDModelState())
     # state = MPDModelState()
     for line in eachline(io)
-        try
-            # if length(state.active_part) > 0
-            #     @show line
-            #     @show summary(state)
-            # end
+        # try
             if length(line) == 0
                 continue
             end
@@ -415,10 +443,11 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
             elseif code == OPTIONAL
                 state = read_optional_line!(model,state,split_line)
             end
-        catch e
-            @show state
-            rethrow(e)
-        end
+        # catch e
+        #     bt = catch_backtrace()
+        #     showerror(stdout,e,bt)
+        #     rethrow(e)
+        # end
     end
     return model
 end
@@ -450,9 +479,10 @@ function read_meta_line!(model,state,line)
     cmd = parse_meta_command(line[2])
     if cmd == FILE
         filename = join(line[3:end]," ")
-        ext = splitext(filename)[2]
+        ext = lowercase(splitext(filename)[2])
+        @info "ext = $ext"
         if ext == ".dat"
-            state = set_new_active_part!(model,state,filename)
+            state = set_active_part!(model,state,filename)
         elseif ext == ".mpd" || ext == ".ldr"
             state = set_new_active_model!(model,state,filename)
         end
@@ -464,7 +494,7 @@ function read_meta_line!(model,state,line)
         if state.file_type == NONE_FILE_TYPE
             @debug "file type not resolved on line : $line"
         end
-        @info "file_type=$state.file_type"
+        @info "file_type=$(state.file_type)"
     else
         # TODO Handle other META commands, especially BFC
     end
@@ -584,41 +614,6 @@ end
 
 export populate_part_geometry!
 
-# """
-#     populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
-#
-# Populate `model` with geometry (from ".dat" files only) of all parts that belong
-# to model and whose names are included in `part_keys`.
-# """
-# function populate_part_geometry!(model,part_keys=Set(collect(keys(model.parts))))
-#     excluded_keys = setdiff(Set(collect(keys(model.parts))), part_keys)
-#     explored = Set{String}()
-#     while !isempty(part_keys)
-#         while !isempty(part_keys)
-#             partfile = pop!(part_keys)
-#             populate_part_geometry!(model,partfile)
-#             push!(explored,partfile)
-#         end
-#         part_keys = setdiff(Set(collect(keys(model.parts))),union(explored,excluded_keys))
-#     end
-#     return model
-# end
-# function populate_part_geometry!(model,partfile::String)
-#     state = LDrawParser.MPDModelState(active_part=partfile)
-#     if splitext(partfile)[end] == ".dat"
-#         println("PART FILE ",partfile)
-#         part = model.parts[partfile]
-#         if part.populated.status
-#             println("Geometry already populated for part ",partfile)
-#             return false
-#         else
-#             parse_ldraw_file!(model,find_part_file(partfile),state)
-#             part.populated.status = true
-#             return true
-#         end
-#     end
-# end
-
 function populate_part_geometry!(model,frontier=Set(collect(keys(model.parts))))
     explored = Set{String}()
     while !isempty(frontier)
@@ -629,12 +624,7 @@ function populate_part_geometry!(model,frontier=Set(collect(keys(model.parts))))
             @warn "Can't find file $subcomponent. Skipping..."
             continue
         end
-        parse_ldraw_file!(model,find_part_file(subcomponent),
-            LDrawParser.MPDModelState(
-                active_model="",
-                active_part=subcomponent
-            )
-        )
+        parse_ldraw_file!(model,partfile,MPDModelState(active_part=subcomponent))
         for k in keys(model.parts)
             if !(k in explored)
                 push!(frontier,k)
@@ -653,15 +643,16 @@ function populate_part_geometry!(model,frontier=Set(collect(keys(model.parts))))
     model
 end
 function recurse_part_geometry!(model,part::DATModel,explored)
-    if !isempty(part.subfiles)
-        for ref in part.subfiles
-            if haskey(model.parts,ref.file) && !(ref.file in explored)
-                subpart = model.parts[ref.file]
+    for ref in part.subfiles
+        if haskey(model.parts,ref.file) && (get_status(part.populated) == false)
+            subpart = model.parts[ref.file]
+            if !(ref.file in explored)
                 recurse_part_geometry!(model,subpart,explored)
-                incorporate_geometry!(part,ref,subpart)
             end
+            incorporate_geometry!(part,ref,subpart)
         end
     end
+    set_status!(part.populated,true)
     push!(explored,part.name)
     part
 end
