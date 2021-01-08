@@ -6,6 +6,7 @@ using GeometryBasics
 using Rotations, CoordinateTransformations
 using Parameters
 using Logging
+using StaticArrays
 
 export
     get_part_library_dir,
@@ -230,6 +231,15 @@ struct DATModel
     )
 end
 model_name(r::DATModel) = r.name
+function extract_surface_geometry(m::DATModel)
+    elements = Vector{GeometryBasics.Ngon}()
+    for vec in (m.triangle_geometry,m.quadrilateral_geometry)
+        for e in vec
+            push!(elements,e.geom)
+        end
+    end
+    elements
+end
 function extract_geometry(m::DATModel)
     elements = Vector{GeometryBasics.Ngon}()
     for vec in (
@@ -368,7 +378,7 @@ function set_active_model!(model::MPDModel,state,name)
     if !haskey(model.models,name)
         model.models[name] = SubModelPlan(name)
     else
-        @warn "$name is already in model!"
+        @debug "$name is already in model!"
     end
     return MPDModelState(state,active_model=name)
 end
@@ -396,9 +406,9 @@ function set_active_part!(model::MPDModel,state,name)
     if !has_part(model,name)
         add_part!(model,name)
     else
-        @warn "$name is already a part in model!"
+        @debug "$name is already a part in model!"
     end
-    @info "Active part = $name"
+    @debug "Active part = $name"
     return MPDModelState(state,active_part=name)
 end
 function add_sub_file_placement!(model::MPDModel,state,ref)
@@ -442,8 +452,8 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
                 continue
             end
             code = parse_command_code(split_line)
-            @info "LINE: $line"
-            @info "code: $code"
+            @debug "LINE: $line"
+            @debug "code: $code"
             if code == META
                 state = read_meta_line!(model,state,split_line)
             elseif code == SUB_FILE_REF
@@ -487,12 +497,12 @@ parser to close the current build step and begin a new one.
 function read_meta_line!(model,state,line)
     @assert parse_command_code(line[1]) == META
     if length(line) < 2
-        @info "Returning because length(line) < 2. Usually this means the end of the file"
+        @debug "Returning because length(line) < 2. Usually this means the end of the file"
         return state
     end
     # cmd = line[2]
     cmd = parse_meta_command(line[2])
-    @info "cmd: $cmd"
+    @debug "cmd: $cmd"
     if cmd == FILE || cmd == NAME
         filename = join(line[3:end]," ")
         ext = lowercase(splitext(filename)[2])
@@ -507,7 +517,7 @@ function read_meta_line!(model,state,line)
                 state.file_type = MODEL
             end
         end
-        @info "file = $filename"
+        @debug "file = $filename"
     elseif cmd == STEP
         set_new_active_building_step!(model,state)
     elseif cmd == FILE_TYPE_DECLARATION
@@ -515,7 +525,7 @@ function read_meta_line!(model,state,line)
         if state.file_type == NONE_FILE_TYPE
             @debug "file type not resolved on line : $line"
         end
-        @info "file_type=$(state.file_type)"
+        @debug "file_type=$(state.file_type)"
     else
         # TODO Handle other META commands, especially BFC
     end
@@ -669,14 +679,8 @@ function recurse_part_geometry!(model,part::DATModel,explored)
         push!(explored,part.name)
         return part
     end
-    if part.name == "43711.dat"
-        @warn "part $(part.name) has $(length(part.subfiles)) subfiles ..."
-    end
     for ref in part.subfiles
         if has_part(model,ref.file)
-            if part.name == "43711.dat"
-                @warn "subfile $(ref.file) of $(part.name) ..."
-            end
             subpart = get_part(model,ref.file)
             if !(ref.file in explored)
                 recurse_part_geometry!(model,subpart,explored)
@@ -689,7 +693,11 @@ function recurse_part_geometry!(model,part::DATModel,explored)
     part
 end
 
-
+const LDRAW_BASE_FRAME = SMatrix{3,3,Float64}(
+    1.0,  0.0,  0.0,
+    0.0,  0.0,  -1.0,
+    0.0,  1.0,  0.0
+)
 
 function (t::AffineMap)(g::G) where {G<:GeometryBasics.Ngon}
     G(map(t,g.points))
@@ -698,6 +706,50 @@ end
 (t::AffineMap)(g::G) where {G<:OptionalLineElement} = G(g.color,t(g.geom),t(g.control_pts))
 function Base.:(*)(r::Rotation,g::G) where {G<:GeometryBasics.Ngon}
     G(map(p->r*p,g.points))
+end
+
+function GeometryBasics.decompose(
+        ::Type{TriangleFace{Int}},
+        n::GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}) where {N}
+    return SVector{N-1,TriangleFace{Int}}(
+        TriangleFace{Int}(1,i,i+1) for i in 1:N-1
+    )
+end
+function GeometryBasics.decompose(
+        ::Type{Point{3,Float64}},
+        n::GeometryBasics.Ngon)
+    return n.points
+end
+GeometryBasics.faces(n::GeometryBasics.Ngon{3,Float64,4,Point{3,Float64}}) = [
+    # QuadFace{Int}(1,2,3,4)
+    TriangleFace{Int}(1,2,3),TriangleFace{Int}(1,3,4)
+]
+GeometryBasics.faces(n::GeometryBasics.Ngon{3,Float64,3,Point{3,Float64}}) = [
+    TriangleFace{Int}(1,2,3)
+]
+GeometryBasics.coordinates(n::GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}) where {N} = Vector(n.points)
+
+function GeometryBasics.coordinates(v::AbstractVector{G}) where {N,G<:GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}}
+    vcat(map(coordinates,v)...)
+end
+function GeometryBasics.faces(v::AbstractVector{G}) where {N,G<:GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}}
+    vcat(map(i->map(f->f .+ ((i-1)*N),faces(v[i])),1:length(v))...)
+end
+function GeometryBasics.faces(v::AbstractVector{G}) where {G<:GeometryBasics.Ngon}
+    face_vec = Vector{TriangleFace{Int}}()
+    i = 0
+    for element in v
+        append!(face_vec, map(f->f.+i,faces(element)))
+        i = face_vec[end].data[3]
+    end
+    return face_vec
+end
+function GeometryBasics.coordinates(v::AbstractVector{G}) where {G<:GeometryBasics.Ngon}
+    coords = Vector{Point{3,Float64}}()
+    for element in v
+        append!(coords, coordinates(element))
+    end
+    return coords
 end
 
 ################################################################################

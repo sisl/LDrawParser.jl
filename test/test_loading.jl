@@ -6,6 +6,7 @@ let
         @test p.populated.status == false
     end
     @test isempty(model.sub_parts)
+    @test !isempty(model.models["20009 - AT-TE Walker.mpd"].steps[1].lines)
     # load geometry
     LDrawParser.populate_part_geometry!(model)
     for (k,p) in Base.Iterators.flatten((model.parts,model.sub_parts))
