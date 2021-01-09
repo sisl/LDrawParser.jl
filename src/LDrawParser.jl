@@ -37,6 +37,24 @@ function find_part_file(name,library=get_part_library_dir())
     return nothing
 end
 
+"""
+    FILE_TYPE
+
+All LDraw files carry the LDR (default), DAT or MPD extension.
+
+Official Parts
+Part | Subpart | Primitive | 8_Primitive | 48_Primitive | Shortcut
+Unofficial Parts
+Unofficial_Part| Unofficial_Subpart | Unofficial_Primitive |
+Unofficial_8_Primitive | Unofficial_48_Primitive | Unofficial_Shortcut
+
+The file type is usually prefaced in one of the following ways
+    0 !LDRAW_ORG <type> (qualifier(s)) (update-tag)
+    0 LDRAW_ORG <type> update-tag
+    0 Official LCAD <type> update-tag
+    0 Unofficial <type>
+    0 Un-official <type>
+"""
 @enum FILE_TYPE begin
     MODEL
     PART
@@ -46,24 +64,14 @@ end
     NONE_FILE_TYPE
 end
 
-# Each line of an LDraw file begins with a number 0-5
-@enum COMMAND_CODE begin
-    META          = 0
-    SUB_FILE_REF  = 1
-    LINE          = 2
-    TRIANGLE      = 3
-    QUADRILATERAL = 4
-    OPTIONAL      = 5
-end
-
-@enum META_COMMAND begin
-    FILE
-    NAME
-    STEP
-    FILE_TYPE_DECLARATION
-    OTHER_META_COMMAND
-end
-
+const FILE_TYPE_HEADERS = Set{String}([
+    "!LDRAW_ORG",
+    "LDRAW_ORG",
+    "OFFICIAL LCAD",
+    "OFFICIAL",
+    "UNOFFICIAL",
+    "UN-OFFICIAL"
+])
 const FILE_TYPE_DICT = Dict{String,FILE_TYPE}(
     "MODEL"                     => MODEL,
     "PART"                      => PART,
@@ -79,21 +87,71 @@ const FILE_TYPE_DICT = Dict{String,FILE_TYPE}(
     "UNOFFICIAL_SHORTCUT"       => PRIMITIVE,
     "SHORTCUT"                  => SHORTCUT,
 )
-const FILE_TYPE_HEADERS = Set{String}([
-    "!LDRAW_ORG",
-    "LDRAW_ORG",
-    "OFFICIAL LCAD",
-    "OFFICIAL",
-    "UNOFFICIAL",
-    "UN-OFFICIAL"
-])
+parse_file_type(k::AbstractString) = get(FILE_TYPE_DICT,uppercase(k), NONE_FILE_TYPE)
+
+"""
+    COMMAND_CODE
+
+The line type of a line is the first number on the line. The line types are:
+0. META          # 0 !<META command> <additional parameters>
+1. SUB_FILE_REF  # 1 <colour> x y z a b c d e f g h i <file>
+2. LINE          # 2 <colour> x1 y1 z1 x2 y2 z2
+3. TRIANGLE      # 3 <colour> x1 y1 z1 x2 y2 z2 x3 y3 z3
+4. QUADRILATERAL # 4 <colour> x1 y1 z1 x2 y2 z2 x3 y3 z3 x4 y4 z4
+5. OPTIONAL_LINE # 5 <colour> x1 y1 z1 x2 y2 z2 x3 y3 z3 x4 y4 z4
+"""
+@enum COMMAND_CODE begin
+    META          = 0 # 0 !<META command> <additional parameters>
+    SUB_FILE_REF  = 1 # 1 <colour> x y z a b c d e f g h i <file>
+    LINE          = 2 # 2 <colour> x1 y1 z1 x2 y2 z2
+    TRIANGLE      = 3 # 3 <colour> x1 y1 z1 x2 y2 z2 x3 y3 z3
+    QUADRILATERAL = 4 # 4 <colour> x1 y1 z1 x2 y2 z2 x3 y3 z3 x4 y4 z4
+    OPTIONAL_LINE = 5 # 5 <colour> x1 y1 z1 x2 y2 z2 x3 y3 z3 x4 y4 z4
+end
+parse_command_code(k::AbstractString) = COMMAND_CODE(parse(Int,k))
+
+"""
+    META_COMMAND
+
+0 !<META command> <additional parameters>
+- `!` is used to positively identify this as a META command. (Note: A few
+    official meta commands do not start with a ! in order to preserve backwards compatibility, however, all new official META commands must start with a ! and it is strongly recommended that new unofficial meta-commands also start with a !)
+- `<META command>` is any string in all caps
+- `<additional parameters>` is any string. Note that if a META command does not
+    require any additional parameter, none should be given.
+"""
+@enum META_COMMAND begin
+    FILE
+    NAME
+    STEP
+    ROTSTEP_BEGIN # ROTSTEP (<x-angle> <y-angle> <z-angle> [(REL| ADD | ABS)] | END)
+    ROTSTEP_END
+    FILE_TYPE_DECLARATION
+    OTHER_META_COMMAND
+end
+
 const META_COMMAND_DICT = Dict{String,META_COMMAND}(
     "FILE"          =>FILE,
     "STEP"          =>STEP,
+    "ROTSTEP"       =>ROTSTEP_BEGIN,
+    "ROTSTEP END"   =>ROTSTEP_END,
     "NAME"          =>NAME,
-    "NAME:"          =>NAME,
+    "NAME:"         =>NAME,
     [k=>FILE_TYPE_DECLARATION for k in FILE_TYPE_HEADERS]...
 )
+parse_meta_command(k::AbstractString) = get(META_COMMAND_DICT, uppercase(k), OTHER_META_COMMAND)
+
+@enum ROTATION_MODE begin
+    REL
+    ADD
+    ABS
+end
+const ROTATION_MODE_DICT = Dict{String,ROTATION_MODE}(
+    "REL"=>REL,
+    "ADD"=>ADD,
+    "ABS"=>ABS,
+)
+parse_rotation_mode(k::AbstractString) = get(ROTATION_MODE_DICT,uppercase(k),REL)
 
 function parse_line(line)
     if Base.Sys.isunix()
@@ -103,14 +161,24 @@ function parse_line(line)
     return split_line
 end
 const SplitLine = Vector{A} where {A<:AbstractString}
-
-parse_file_type(k::AbstractString)      = get(FILE_TYPE_DICT,uppercase(k), NONE_FILE_TYPE)
-parse_command_code(k::AbstractString)   = COMMAND_CODE(parse(Int,k))
-function parse_meta_command(k::AbstractString)
-    get(META_COMMAND_DICT,uppercase(k), OTHER_META_COMMAND)
-end
-for op in [:parse_file_type, :parse_command_code, :parse_meta_command]
+for op in [:parse_file_type, :parse_command_code]
     @eval $op(split_line::SplitLine) = $op(split_line[1])
+end
+
+function parse_meta_command(split_line::SplitLine)
+    if split_line[1] == "0"
+        return parse_meta_command(split_line[2:end])
+    end
+    cmd = parse_meta_command(split_line[1])
+    if cmd == ROTSTEP_BEGIN
+        if parse_meta_command(join(split_line[1:2]," ")) == ROTSTEP_END
+            cmd = ROTSTEP_END
+            # insert!(split_line,2,join(split_line[1:2]," "))
+            # deleteat!(split_line,3)
+            # deleteat!(split_line,3)
+        end
+    end
+    return cmd
 end
 
 const Point3D   = Point{3,Float64}
@@ -153,6 +221,14 @@ model_name(r::SubFileRef) = r.file
 function build_transform(ref::SubFileRef)
     # @warn "Need to account for the weird LDraw coordinate system at some point"
     Translation(ref.pos[1],ref.pos[2],ref.pos[3]) ∘ LinearMap(ref.rot)
+end
+function SubFileRef(ref::SubFileRef,T::AffineMap)
+    new_ref = SubFileRef(
+        ref.color,
+        Point3D(T.translation...),
+        T.linear,
+        ref.file
+    )
 end
 
 """
@@ -263,9 +339,12 @@ function extract_points(m::DATModel)
     end
     pts
 end
-function incorporate_geometry!(m::DATModel,ref::SubFileRef,child::DATModel)
-    # @info "incorporating geometry from $(child.name) into $(m.name)"
+function incorporate_geometry!(m::DATModel,ref::SubFileRef,child::DATModel,scale=1.0)
     t = build_transform(ref)
+    incorporate_geometry!(m,child,t,scale)
+end
+function incorporate_geometry!(m::DATModel,child::DATModel,t,scale=1.0)
+    # @info "incorporating geometry from $(child.name) into $(m.name)"
     for (parent_geometry,child_geometry) in zip(
             (m.line_geometry, m.triangle_geometry, m.quadrilateral_geometry,
                 m.optional_line_geometry),
@@ -273,10 +352,16 @@ function incorporate_geometry!(m::DATModel,ref::SubFileRef,child::DATModel)
                 child.optional_line_geometry)
         )
         for element in child_geometry
-            push!(parent_geometry, t(element))
+            push!(parent_geometry, t(element)*scale)
         end
     end
     return m
+end
+function DATModel(part::DATModel,T,scale=1.0)
+    new_part = DATModel(part.name)
+    incorporate_geometry!(new_part,part,T,scale)
+    set_status!(new_part.populated,get_status(part.populated))
+    new_part
 end
 
 """
@@ -320,6 +405,14 @@ function get_part(m::MPDModel,k)
     return nothing
 end
 has_part(m::MPDModel,k) = haskey(m.parts,k) || haskey(m.sub_parts,k)
+function set_part!(m::MPDModel,part,k=part.name)
+    if haskey(m.sub_parts,k)
+        m.sub_parts[k] = part
+    else
+        m.parts[k] = part
+    end
+    part
+end
 function add_part!(m::MPDModel,k)
     @assert !has_part(m,k)
     m.parts[k] = DATModel(k)
@@ -359,6 +452,7 @@ end
     file_type::FILE_TYPE = NONE_FILE_TYPE
     active_model::String = ""
     active_part::String = ""
+    rot_stack::Vector{SMatrix{3,3,Float64}} = [one(SMatrix{3,3,Float64})]
 end
 
 Base.summary(s::MPDModelState) = string(
@@ -465,7 +559,7 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
                 state = read_triangle!(model,state,split_line)
             elseif code == QUADRILATERAL
                 state = read_quadrilateral!(model,state,split_line)
-            elseif code == OPTIONAL
+            elseif code == OPTIONAL_LINE
                 state = read_optional_line!(model,state,split_line)
             end
         # catch e
@@ -501,7 +595,7 @@ function read_meta_line!(model,state,line)
         return state
     end
     # cmd = line[2]
-    cmd = parse_meta_command(line[2])
+    cmd = parse_meta_command(line[2:end])
     @debug "cmd: $cmd"
     if cmd == FILE || cmd == NAME
         filename = join(line[3:end]," ")
@@ -520,6 +614,25 @@ function read_meta_line!(model,state,line)
         @debug "file = $filename"
     elseif cmd == STEP
         set_new_active_building_step!(model,state)
+    # elseif cmd == ROTSTEP_BEGIN
+    #     rx,ry,rz = [parse(Float64,line[3]),parse(Float64,line[4]),parse(Float64,line[5])]
+    #     rot_mode = parse_rotation_mode(line[6])
+    #     rmat = RotMatrix(RotXYZ(rx,ry,rz)).mat
+    #     if rot_mode == ABS
+    #         empty!(state.rot_stack)
+    #         push!(state.rot_stack, rmat)
+    #     elseif rot_mode == REL
+    #         @warn "Need to be sure that RotXYZ does things in the right order"
+    #         push!(state.rot_stack, rmat)
+    #     elseif rot_mode == ADD
+    #         push!(state.rot_stack, rmat)
+    #     end
+    # elseif cmd == ROTSTEP_END
+    #     if length(state.rot_stack) > 1
+    #         pop!(state.rot_stack) # remove the last
+    #     else
+    #         state.rot_stack[1] = one(eltype(state.rot_stack))
+    #     end
     elseif cmd == FILE_TYPE_DECLARATION
         state.file_type = parse_file_type(line[3])
         if state.file_type == NONE_FILE_TYPE
@@ -621,10 +734,10 @@ end
 """
     read_optional_line!
 
-For reading lines of type OPTIONAL
+For reading lines of type OPTIONAL_LINE
 """
 function read_optional_line!(model,state,line)
-    @assert parse_command_code(line[1]) == OPTIONAL
+    @assert parse_command_code(line[1]) == OPTIONAL_LINE
     @assert length(line) == 14
     color = parse_color(line[2])
     p1 = Point3D(parse.(Float64,line[3:5]))
@@ -706,6 +819,39 @@ end
 (t::AffineMap)(g::G) where {G<:OptionalLineElement} = G(g.color,t(g.geom),t(g.control_pts))
 function Base.:(*)(r::Rotation,g::G) where {G<:GeometryBasics.Ngon}
     G(map(p->r*p,g.points))
+end
+function Base.:(*)(g::G,x::Float64) where {G<:GeometryBasics.Ngon}
+    G(map(p->p*x,g.points))
+end
+Base.:(*)(g::G,x::Float64) where {G<:NgonElement} = G(g.color,g.geom*x)
+Base.:(*)(g::G,x::Float64) where {G<:OptionalLineElement} = G(g.color,g.geom*x,g.control_pts*x)
+function scale_translation(T::AffineMap,scale::Float64)
+    compose(Translation(scale*T.translation...), LinearMap(T.linear))
+end
+
+"""
+    change_coordinate_system!(model::MPDModel,T)
+
+Transform the coordinate system of the entire model
+"""
+function change_coordinate_system!(model::MPDModel,T,scale=1.0)
+    Tinv = inv(T)
+    for (k,m) in model.models
+        for step in m.steps
+            for i in 1:length(step.lines)
+                ref = step.lines[i]
+                t = build_transform(ref)
+                new_t = scale_translation(T ∘ t ∘ Tinv,scale)
+                step.lines[i] = SubFileRef(ref,new_t)
+            end
+        end
+    end
+    for k in collect(all_part_keys(model))
+        part = get_part(model,k)
+        new_part = DATModel(part,T,scale)
+        set_part!(model,new_part,k)
+    end
+    return model
 end
 
 function GeometryBasics.decompose(
