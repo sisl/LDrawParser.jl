@@ -39,13 +39,6 @@ jobs:
       - run: ls ~/.julia/registries
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
-      # - run: | 
-      #     julia -e '
-      #       using Pkg
-      #       pkg"dev https://github.com/kylejbrown17/GraphUtils.jl.git"
-      #       Pkg.activate(".")
-      #       Pkg.build()
-      #       Pkg.test()'
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -54,13 +47,27 @@ jobs:
       - uses: julia-actions/setup-julia@v1
         with:
           version: '1'
+      - run: julia -e 'using Pkg; pkg"registry add https://github.com/JuliaRegistries/General"'
+      - uses: webfactory/ssh-agent@v0.4.1 # Use to add private ssh key to match deploy key
+        with:
+          ssh-private-key: ${{ secrets.JULIA_PACKAGE_REGISTRY_KEY }}
       - run: |
           julia --project=docs -e '
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.activate(pwd())
-            pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
             Pkg.instantiate()'
+      - run: |
+          julia --project=docs -e '
+            using Documenter: doctest
+            using LDrawParser 
+            doctest(LDrawParser)'
+      # - run: |
+      #     julia --project=docs -e '
+      #       using Pkg
+      #       Pkg.develop(PackageSpec(path=pwd()))
+      #       Pkg.activate(pwd())
+      #       pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
+      #       Pkg.instantiate()'
       - run: julia --project=docs docs/make.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
