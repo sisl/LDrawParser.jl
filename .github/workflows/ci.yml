@@ -31,6 +31,7 @@ jobs:
             ${{ runner.os }}-test-${{ env.cache-name }}-
             ${{ runner.os }}-test-
             ${{ runner.os }}-
+      - run: julia -e 'using Pkg; pkg"registry add https://github.com/JuliaRegistries/General"'
       - uses: webfactory/ssh-agent@v0.4.1 # Use to add private ssh key to match deploy key
         with:
           ssh-private-key: ${{ secrets.JULIA_PACKAGE_REGISTRY_KEY }}
