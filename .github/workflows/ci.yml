@@ -34,19 +34,17 @@ jobs:
       - uses: webfactory/ssh-agent@v0.4.1 # Use to add private ssh key to match deploy key
         with:
           ssh-private-key: ${{ secrets.JULIA_PACKAGE_REGISTRY_KEY }}
-      # - uses: actions/checkout@v2 # Checkout my private package registry
-      #   - repository: git@github.com:kylejbrown17/JuliaPackageRegistry.git
-      #   - token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
       - run: julia -e 'using Pkg; pkg"registry add git@github.com:kylejbrown17/JuliaPackageRegistry.git"'
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-      # - run: | 
-      #     julia -e '
-      #       using Pkg
-      #       pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
-      #       Pkg.activate(".")
-      #       Pkg.build()
-      #       Pkg.test()'
+      - run: ls ~/.julia/registries
+      # - uses: julia-actions/julia-buildpkg@v1
+      # - uses: julia-actions/julia-runtest@v1
+      - run: | 
+          julia -e '
+            using Pkg
+            pkg"dev https://github.com/kylejbrown17/GraphUtils.jl.git"
+            Pkg.activate(".")
+            Pkg.build()
+            Pkg.test()'
   docs:
     name: Documentation
     runs-on: ubuntu-latest
