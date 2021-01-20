@@ -37,15 +37,15 @@ jobs:
           ssh-private-key: ${{ secrets.JULIA_PACKAGE_REGISTRY_KEY }}
       - run: julia -e 'using Pkg; pkg"registry add git@github.com:kylejbrown17/JuliaPackageRegistry.git"'
       - run: ls ~/.julia/registries
-      # - uses: julia-actions/julia-buildpkg@v1
-      # - uses: julia-actions/julia-runtest@v1
-      - run: | 
-          julia -e '
-            using Pkg
-            pkg"dev https://github.com/kylejbrown17/GraphUtils.jl.git"
-            Pkg.activate(".")
-            Pkg.build()
-            Pkg.test()'
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
+      # - run: | 
+      #     julia -e '
+      #       using Pkg
+      #       pkg"dev https://github.com/kylejbrown17/GraphUtils.jl.git"
+      #       Pkg.activate(".")
+      #       Pkg.build()
+      #       Pkg.test()'
   docs:
     name: Documentation
     runs-on: ubuntu-latest
