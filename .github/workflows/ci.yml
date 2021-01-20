@@ -48,8 +48,8 @@ jobs:
       - run: |
           julia --project=docs -e '
             using Pkg
+            pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
             Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.activate(pwd())
             Pkg.instantiate()'
       - run: julia --project=docs docs/make.jl
         env:
