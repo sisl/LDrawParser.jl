@@ -38,7 +38,7 @@ jobs:
       - run: | 
           julia -e '
             using Pkg
-            Pkg.add("https://github.com/kylejbrown17/GraphUtils.jl.git")
+            pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
             Pkg.activate(".")
             Pkg.build()
             Pkg.test()'
