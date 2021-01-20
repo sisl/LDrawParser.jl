@@ -57,25 +57,11 @@ jobs:
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
-      # - run: |
-      #     julia --project=docs -e '
-      #       using Pkg
-      #       pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
-      #       pkg"add https://github.com/kylejbrown17/LDrawParser.jl.git"
-      #       Pkg.instantiate()
-      #       Pkg.develop(PackageSpec(path=pwd()))'
       - run: |
           julia --project=docs -e '
             using Documenter: doctest
             using LDrawParser 
             doctest(LDrawParser)'
-        # - run: |
-        #     julia --project=docs -e '
-        #       using Pkg
-        #       Pkg.develop(PackageSpec(path=pwd()))
-        #       Pkg.activate(pwd())
-        #       pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
-        #       Pkg.instantiate()'
       - run: julia --project=docs docs/make.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
