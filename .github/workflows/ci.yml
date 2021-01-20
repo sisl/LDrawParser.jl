@@ -32,6 +32,7 @@ jobs:
             ${{ runner.os }}-test-
             ${{ runner.os }}-
       - uses: webfactory/ssh-agent@v0.4.1 # Use to add private ssh key to match deploy key
+        with:
           ssh-private-key: ${{ secrets.JULIA_PACKAGE_REGISTRY_KEY }}
       # - uses: actions/checkout@v2 # Checkout my private package registry
       #   - repository: git@github.com:kylejbrown17/JuliaPackageRegistry.git
