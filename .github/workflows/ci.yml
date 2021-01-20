@@ -49,7 +49,7 @@ jobs:
           julia --project=docs -e '
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.activate(PackageSpec(path=pwd()))
+            Pkg.activate(pwd())
             Pkg.instantiate()'
       - run: julia --project=docs docs/make.jl
         env:
