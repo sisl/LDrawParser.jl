@@ -35,9 +35,17 @@ jobs:
             ${{ runner.os }}-test-${{ env.cache-name }}-
             ${{ runner.os }}-test-
             ${{ runner.os }}-
-      - run: julia test/deps.jl
-      - uses: julia-actions/julia-buildpkg@latest
-      - uses: julia-actions/julia-runtest@latest
+      - run: | 
+        julia -e '
+          using Pkg
+          pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
+          Pkg.activate(".")
+          Pkg.build()
+          Pkg.test()
+          '
+      # - run: julia test/deps.jl
+      # - uses: julia-actions/julia-buildpkg@latest
+      # - uses: julia-actions/julia-runtest@latest
   docs:
     name: Documentation
     runs-on: ubuntu-latest
