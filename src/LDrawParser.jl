@@ -20,11 +20,16 @@ export
     MPDModel,
 
     model_name,
+    has_model,
+    get_model,
+    has_part,
+    get_part,
 
     parse_ldraw_file!,
     parse_ldraw_file,
 
-    populate_part_geometry!
+    populate_part_geometry!,
+    ldraw_base_transform
 
 
 global PART_LIBRARY_DIR = "/scratch/ldraw_parts_library/ldraw/"
@@ -184,12 +189,9 @@ function parse_meta_command(split_line::SplitLine)
         return parse_meta_command(split_line[2:end])
     end
     cmd = parse_meta_command(split_line[1])
-    if cmd == ROTSTEP_BEGIN
+    if cmd == ROTSTEP_BEGIN # NOTE not necessary, as it only affects the VIEW (not the model)
         if parse_meta_command(join(split_line[1:2]," ")) == ROTSTEP_END
             cmd = ROTSTEP_END
-            # insert!(split_line,2,join(split_line[1:2]," "))
-            # deleteat!(split_line,3)
-            # deleteat!(split_line,3)
         end
     end
     return cmd
@@ -252,13 +254,12 @@ Represents a sequence of part placements that make up a building step in a LDraw
 file.
 """
 struct BuildingStep
+    parent::String # points to the SubModelPlan to which it belongs
     lines::Vector{SubFileRef}
-    BuildingStep() = new(Vector{SubFileRef}())
+    BuildingStep(p::String) = new(p,Vector{SubFileRef}())
 end
 Base.push!(step::BuildingStep,ref::SubFileRef) = push!(step.lines,ref)
 n_lines(s::BuildingStep) = length(s.lines)
-# Base.string(s::BuildingStep) = string("BuildingStep:",map(r->string("\n  ",string(r)), s.lines)...)
-# Base.show(io::IO,s::BuildingStep) = print(io,string(s))
 
 """
     SubModelPlan
@@ -271,12 +272,13 @@ struct SubModelPlan
     steps::Vector{BuildingStep}
     SubModelPlan(name::String) = new(
         name,
-        Vector{BuildingStep}([BuildingStep()])
+        Vector{BuildingStep}([BuildingStep(name)])
         )
 end
 model_name(r::SubModelPlan) = r.name
 n_build_steps(m::SubModelPlan) = length(m.steps)
 n_components(m::SubModelPlan) = sum(map(n_lines,m.steps))
+BuildingStep(p::SubModelPlan) = BuildingStep(model_name(p))
 Base.summary(n::SubModelPlan) = string("SubModelPlan: ",model_name(n),": ",
     n_build_steps(n)," building steps, ",n_components(n)," components")
 
@@ -381,11 +383,12 @@ includes a submodel tree (stored implicitly in a dictionary that maps model_name
 to SubModelPlan) and a part list. The first model in MPDModel.models is the main
 model. All the following are submodels of that model and/or each other.
 """
-@with_kw struct MPDModel #<: AbstractCustomNEDiGraph{CustomNode{Union{SubModelPlan,DATModel},String},CustomEdge{SubModelRef,String},String}
+@with_kw_noshow struct MPDModel #<: AbstractCustomNEDiGraph{CustomNode{Union{SubModelPlan,DATModel},String},CustomEdge{SubModelRef,String},String}
     models      ::Dict{String,SubModelPlan} = Dict{String,SubModelPlan}() # each file is a list of steps
     parts       ::Dict{String,DATModel} = Dict{String,DATModel}()
     sub_parts   ::Dict{String,DATModel} = Dict{String,DATModel}()
 end
+has_part(m::MPDModel,k) = haskey(m.parts,k) || haskey(m.sub_parts,k)
 function get_part(m::MPDModel,k)
     if haskey(m.parts,k)
         return m.parts[k]
@@ -394,7 +397,8 @@ function get_part(m::MPDModel,k)
     end
     return nothing
 end
-has_part(m::MPDModel,k) = haskey(m.parts,k) || haskey(m.sub_parts,k)
+has_model(m::MPDModel,k) = haskey(m.models,k)
+get_model(m::MPDModel,k) = get(m.models,k,nothing)
 function set_part!(m::MPDModel,part,k=part.name)
     if haskey(m.sub_parts,k)
         m.sub_parts[k] = part
@@ -414,6 +418,9 @@ end
 part_keys(m::MPDModel) = keys(m.parts)
 sub_part_keys(m::MPDModel) = keys(m.sub_parts)
 all_part_keys(m::MPDModel) = Base.Iterators.flatten((part_keys(m),sub_part_keys(m)))
+
+points_to_part(m::MPDModel,ref::SubFileRef) = has_part(m,ref.file)
+points_to_model(m::MPDModel,ref::SubFileRef) = has_model(m,ref.file)
 
 # struct LDRGeometry
 #     lines::Vector{NgonElement{Line{3,Float64}}}
@@ -471,7 +478,7 @@ function active_building_step(model::MPDModel,state)
     return active_building_step(active_model,state)
 end
 function set_new_active_building_step!(model::SubModelPlan)
-    push!(model.steps,BuildingStep())
+    push!(model.steps,BuildingStep(model))
     return model
 end
 function set_new_active_building_step!(model::MPDModel,state)
@@ -760,7 +767,7 @@ function populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
         push!(explored,subcomponent)
         partfile = find_part_file(subcomponent)
         if partfile === nothing
-            @warn "Can't find file $subcomponent. Skipping..."
+            @warn "Can't find file $subcomponent to populate geometry. Skipping..."
             continue
         end
         parse_ldraw_file!(model,partfile,MPDModelState(active_part=subcomponent))
@@ -812,6 +819,7 @@ const LDRAW_BASE_FRAME = SMatrix{3,3,Float64}(
 Returns a rotation matrix that defines the base LDraw coordinate system.
 """
 ldraw_base_frame() = deepcopy(LDRAW_BASE_FRAME)
+ldraw_base_transform() = Translation(0.0,0.0,0.0) ∘ LinearMap(ldraw_base_frame())
 
 function (t::AffineMap)(g::G) where {G<:GeometryBasics.Ngon}
     G(map(t,g.points))
@@ -835,7 +843,7 @@ end
 
 Transform the coordinate system of the entire model
 """
-function change_coordinate_system!(model::MPDModel,T,scale=1.0)
+function change_coordinate_system!(model::MPDModel,T=ldraw_base_transform(),scale=1.0)
     Tinv = inv(T)
     for (k,m) in model.models
         for step in m.steps

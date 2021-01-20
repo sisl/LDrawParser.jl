@@ -3,12 +3,14 @@ using Logging
 
 using LDrawParser
 using CoordinateTransformations, Rotations
+using GeometryBasics
 
 # Set logging level
-global_logger(SimpleLogger(stderr, Logging.Debug))
+# global_logger(SimpleLogger(stderr, Logging.Debug))
+global_logger(SimpleLogger(stderr, Logging.Info))
 
 # Fix randomness during tests
-Random.seed!(0)
+# Random.seed!(0)
 
 @inline function array_isapprox(x::AbstractArray{F},
                   y::AbstractArray{F};
