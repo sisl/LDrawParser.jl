@@ -35,6 +35,7 @@ jobs:
             ${{ runner.os }}-test-${{ env.cache-name }}-
             ${{ runner.os }}-test-
             ${{ runner.os }}-
+      - run: julia test/deps
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
   docs:
@@ -48,8 +49,9 @@ jobs:
       - run: |
           julia --project=docs -e '
             using Pkg
-            pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
             Pkg.develop(PackageSpec(path=pwd()))
+            Pkg.activate(pwd())
+            pkg"add https://github.com/kylejbrown17/GraphUtils.jl.git"
             Pkg.instantiate()'
       - run: julia --project=docs docs/make.jl
         env:
