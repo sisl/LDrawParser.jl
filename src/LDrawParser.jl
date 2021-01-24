@@ -7,6 +7,7 @@ using Rotations, CoordinateTransformations
 using Parameters
 using Logging
 using StaticArrays
+using Colors
 
 export
     get_part_library_dir,
@@ -147,6 +148,7 @@ parse_command_code(k::AbstractString) = COMMAND_CODE(parse(Int,k))
     ROTSTEP_END
     FILE_TYPE_DECLARATION
     OTHER_META_COMMAND
+    COLORDEF
 end
 
 const META_COMMAND_DICT = Dict{String,META_COMMAND}(
@@ -156,7 +158,11 @@ const META_COMMAND_DICT = Dict{String,META_COMMAND}(
     "ROTSTEP END"   =>ROTSTEP_END,
     "NAME"          =>NAME,
     "NAME:"         =>NAME,
-    [k=>FILE_TYPE_DECLARATION for k in FILE_TYPE_HEADERS]...
+    [k=>FILE_TYPE_DECLARATION for k in FILE_TYPE_HEADERS]...,
+    "COLOUR"        =>COLORDEF,
+    "COLOR"         =>COLORDEF,
+    "!COLOUR"       =>COLORDEF,
+    "!COLOR"        =>COLORDEF,
 )
 parse_meta_command(k::AbstractString) = get(META_COMMAND_DICT, uppercase(k), OTHER_META_COMMAND)
 
@@ -256,10 +262,11 @@ file.
 struct BuildingStep
     parent::String # points to the SubModelPlan to which it belongs
     lines::Vector{SubFileRef}
-    BuildingStep(p::String) = new(p,Vector{SubFileRef}())
 end
 Base.push!(step::BuildingStep,ref::SubFileRef) = push!(step.lines,ref)
 n_lines(s::BuildingStep) = length(s.lines)
+BuildingStep(p::String) = BuildingStep(p,Vector{SubFileRef}())
+BuildingStep(step::BuildingStep,parent::String) = BuildingStep(parent,step.lines)
 
 """
     SubModelPlan
@@ -316,6 +323,16 @@ struct DATModel
         Vector{String}(),
         Toggle(false)
     )
+end
+function Base.summary(d::DATModel)
+    string("DATModel",
+    "\n\t","$(d.name)",
+    "\n\t","line_geometry:","$(length(d.line_geometry))",
+    "\n\t","triangle_geometry:","$(length(d.triangle_geometry))",
+    "\n\t","quad_geometry:","$(length(d.quadrilateral_geometry))",
+    "\n\t","optional_line_geometry:","$(length(d.optional_line_geometry))",
+    "\n\t","sub_files:","$(length(d.subfiles))",
+    "\n\t","populated: ","$(d.populated)")
 end
 model_name(r::DATModel) = r.name
 function extract_surface_geometry(m::DATModel)
@@ -636,11 +653,87 @@ function read_meta_line!(model,state,line)
             @debug "file type not resolved on line : $line"
         end
         @debug "file_type=$(state.file_type)"
+    elseif cmd == COLORDEF
+        # add color definition to global color dict
+        parse_color_def!(line)
     else
         # TODO Handle other META commands, especially BFC
     end
     return state
 end
+
+global COLOR_DICT = Dict{Int,ColorAlpha}()
+color_dict_is_loaded() = !isempty(COLOR_DICT)
+
+
+function parse_color_def!(line)
+    @assert parse_command_code(line[1]) == META
+    @assert parse_meta_command(line[2]) == COLORDEF
+    color_code = nothing
+    color_val = nothing
+    alpha_val = 1.0
+    val, line_iter = Base.Iterators.peel(line)
+    while !isempty(line_iter)
+        if val == "CODE"
+            val, line_iter = Base.Iterators.peel(line_iter)
+            color_code = parse(Int,val)
+        elseif val == "VALUE"
+            val, line_iter = Base.Iterators.peel(line_iter)
+            color_val = parse(Colorant,val)
+        elseif val == "ALPHA"
+            val, line_iter = Base.Iterators.peel(line_iter)
+            alpha_val = parse(Int,val) / 256.0
+        else
+            val, line_iter = Base.Iterators.peel(line_iter)
+        end
+    end
+    if !(color_code === nothing) && !(color_val === nothing)
+        global COLOR_DICT
+        @show color_val, alpha_val
+        COLOR_DICT[color_code] = alphacolor(color_val,alpha_val)
+    end
+end
+
+"""
+    load_color_dict!(path=joinpath(get_part_library_dir(),"LDConfig.ldr")))
+
+Load dictionary mapping Integer code to color.
+"""
+function load_color_dict!(path=joinpath(get_part_library_dir(),"LDConfig.ldr"))
+    open(path) do io
+        for line in eachline(io)
+            if length(line) <= 1
+                continue
+            end
+            split_line = parse_line(line)
+            if isempty(split_line[1])
+                continue
+            end
+            code = parse_command_code(split_line)
+            @debug "LINE: $line"
+            @debug "code: $code"
+            if code == META
+                if parse_meta_command(split_line) == COLORDEF
+                    parse_color_def!(split_line)
+                end
+            end
+        end
+    end 
+end
+
+"""
+    get_color_dict()
+
+get dictionary mapping Integer code to color.
+"""
+function get_color_dict()
+    if !color_dict_is_loaded()
+        load_color_dict!()
+    end
+    deepcopy(COLOR_DICT)
+end
+
+
 
 """
     read_sub_file_ref
@@ -751,7 +844,6 @@ function read_optional_line!(model,state,line)
         ))
     return state
 end
-
 
 """
     populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
