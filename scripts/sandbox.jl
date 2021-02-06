@@ -20,7 +20,7 @@ LDrawParser.populate_part_geometry!(model)
 #     max_volume_per_robot = 1000000.0 #20000.0,
 # )
 # for (k,part) in parts
-#     points = map(T, LDrawParser.extract_points(part))
+#     points = map(T, LDrawParser.points_iterator(part))
 #     if isempty(points)
 #         println("Part $k has no geometry!")
 #         continue

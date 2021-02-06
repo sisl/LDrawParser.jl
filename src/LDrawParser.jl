@@ -284,10 +284,10 @@ struct SubModelPlan
 end
 model_name(r::SubModelPlan) = r.name
 n_build_steps(m::SubModelPlan) = length(m.steps)
-n_components(m::SubModelPlan) = sum(map(n_lines,m.steps))
+n_assembly_components(m::SubModelPlan) = sum(map(n_lines,m.steps))
 BuildingStep(p::SubModelPlan) = BuildingStep(model_name(p))
 Base.summary(n::SubModelPlan) = string("SubModelPlan: ",model_name(n),": ",
-    n_build_steps(n)," building steps, ",n_components(n)," components")
+    n_build_steps(n)," building steps, ",n_assembly_components(n)," components")
 
 
 const Quadrilateral{Dim,T} = GeometryBasics.Ngon{Dim,T,4,Point{Dim,T}}
@@ -345,7 +345,10 @@ function extract_surface_geometry(m::DATModel)
     elements
 end
 function extract_geometry(m::DATModel)
+    # Base.Iterators.flatten()
+    # EL_TYPE = GeometryBasics.Ngon{3,T,M,V} where {T,M,V}
     elements = Vector{GeometryBasics.Ngon}()
+    # elements = Vector{EL_TYPE}()
     for vec in (
             m.line_geometry,
             m.triangle_geometry,
@@ -361,18 +364,28 @@ end
 function extract_points(m::DATModel)
     pts = Vector{Point3{Float64}}()
     for e in extract_geometry(m)
-        for pt in e.points
+        for pt in coordinates(e) #.points
             push!(pts,pt)
         end
     end
     pts
 end
+function geometry_iterator(m::DATModel)
+    Base.Iterators.flatten(
+        (m.line_geometry,
+        m.triangle_geometry,
+        m.quadrilateral_geometry,
+        m.optional_line_geometry)
+    )
+end
+points_iterator(m::DATModel) = Base.Iterators.flatten(map(e->e.geom.points,geometry_iterator(m)))
+GeometryBasics.coordinates(m::DATModel) = points_iterator(m)
 function incorporate_geometry!(m::DATModel,ref::SubFileRef,child::DATModel,scale=1.0)
     t = build_transform(ref)
     incorporate_geometry!(m,child,t,scale)
 end
 function incorporate_geometry!(m::DATModel,child::DATModel,t,scale=1.0)
-    # @info "incorporating geometry from $(child.name) into $(m.name)"
+    @info "incorporating geometry from $(child.name) into $(m.name)"
     for (parent_geometry,child_geometry) in zip(
             (m.line_geometry, m.triangle_geometry, m.quadrilateral_geometry,
                 m.optional_line_geometry),
@@ -628,25 +641,6 @@ function read_meta_line!(model,state,line)
         @debug "file = $filename"
     elseif cmd == STEP
         set_new_active_building_step!(model,state)
-    # elseif cmd == ROTSTEP_BEGIN
-    #     rx,ry,rz = [parse(Float64,line[3]),parse(Float64,line[4]),parse(Float64,line[5])]
-    #     rot_mode = parse_rotation_mode(line[6])
-    #     rmat = RotMatrix(RotXYZ(rx,ry,rz)).mat
-    #     if rot_mode == ABS
-    #         empty!(state.rot_stack)
-    #         push!(state.rot_stack, rmat)
-    #     elseif rot_mode == REL
-    #         @warn "Need to be sure that RotXYZ does things in the right order"
-    #         push!(state.rot_stack, rmat)
-    #     elseif rot_mode == ADD
-    #         push!(state.rot_stack, rmat)
-    #     end
-    # elseif cmd == ROTSTEP_END
-    #     if length(state.rot_stack) > 1
-    #         pop!(state.rot_stack) # remove the last
-    #     else
-    #         state.rot_stack[1] = one(eltype(state.rot_stack))
-    #     end
     elseif cmd == FILE_TYPE_DECLARATION
         state.file_type = parse_file_type(line[3])
         if state.file_type == NONE_FILE_TYPE
@@ -863,7 +857,6 @@ function populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
             continue
         end
         parse_ldraw_file!(model,partfile,MPDModelState(active_part=subcomponent))
-        # for k in keys(model.parts)
         for k in all_part_keys(model)
             if !(k in explored)
                 push!(frontier,k)
@@ -974,8 +967,9 @@ GeometryBasics.faces(n::GeometryBasics.Ngon{3,Float64,4,Point{3,Float64}}) = [
 GeometryBasics.faces(n::GeometryBasics.Ngon{3,Float64,3,Point{3,Float64}}) = [
     TriangleFace{Int}(1,2,3)
 ]
-GeometryBasics.coordinates(n::GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}) where {N} = Vector(n.points)
+# GeometryBasics.coordinates(n::GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}) where {N} = Vector(n.points)
 
+GeometryBasics.coordinates(v::AbstractVector) = collect(Base.Iterators.flatten(map(coordinates,v)))
 function GeometryBasics.coordinates(v::AbstractVector{G}) where {N,G<:GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}}
     vcat(map(coordinates,v)...)
 end
@@ -991,12 +985,12 @@ function GeometryBasics.faces(v::AbstractVector{G}) where {G<:GeometryBasics.Ngo
     end
     return face_vec
 end
-function GeometryBasics.coordinates(v::AbstractVector{G}) where {G<:GeometryBasics.Ngon}
-    coords = Vector{Point{3,Float64}}()
-    for element in v
-        append!(coords, coordinates(element))
-    end
-    return coords
-end
+# function GeometryBasics.coordinates(v::AbstractVector{G}) where {G<:GeometryBasics.Ngon}
+#     coords = Vector{Point{3,Float64}}()
+#     for element in v
+#         append!(coords, coordinates(element))
+#     end
+#     return coords
+# end
 
 end
