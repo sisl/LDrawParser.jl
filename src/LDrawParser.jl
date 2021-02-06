@@ -39,6 +39,29 @@ function set_part_library_dir!(path)
     PART_LIBRARY_DIR = path
 end
 
+global FILE_PATH_CACHE = Dict{String,String}()
+get_file_path_cache() = FILE_PATH_CACHE
+function try_find_part_file!(name,library=get_part_library_dir())
+    cache = get_file_path_cache()
+    if haskey(cache,name)
+        @debug "found $name in FILE_PATH_CACHE"
+        return cache[name]
+    else
+        filepath = find_part_file(name,library)
+        if !(filepath === nothing)
+            cache[name] = filepath
+            cache[filepath] = filepath
+            return filepath
+        end
+    end
+    return name
+end
+
+"""
+    find_part_file(name,library=get_part_library_dir())
+
+Try to find a file with name `name`, and return that file's path if found.
+"""
 function find_part_file(name,library=get_part_library_dir())
     if isfile(name)
         return name
@@ -53,9 +76,10 @@ function find_part_file(name,library=get_part_library_dir())
             end
         end
     end
-    println("Part file ",name," not found in library at ",library)
+    @warn "Part file $name not found in library at $library"
     return nothing
 end
+
 
 """
     FILE_TYPE
@@ -495,8 +519,7 @@ function active_submodel(model::MPDModel,state)
     return model.models[state.active_model]
 end
 function set_active_model!(model::MPDModel,state,name)
-    # @assert !haskey(model.models,name)
-    if !haskey(model.models,name)
+    if !has_model(model,name)
         model.models[name] = SubModelPlan(name)
     else
         @debug "$name is already in model!"
@@ -626,6 +649,7 @@ function read_meta_line!(model,state,line)
     @debug "cmd: $cmd"
     if cmd == FILE || cmd == NAME
         filename = join(line[3:end]," ")
+        filename = try_find_part_file!(filename)
         ext = lowercase(splitext(filename)[2])
         if ext == ".dat"
             state = set_active_part!(model,state,filename)
@@ -743,6 +767,7 @@ function read_sub_file_ref!(model,state,line)
     # rotation of part
     rot_mat = collect(transpose(reshape(parse.(Float64,line[6:14]),3,3)))
     file = join(line[15:end]," ")
+    file = try_find_part_file!(file)
     # TODO add a line struct to the model
     ref = SubFileRef(
         color,
