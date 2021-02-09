@@ -52,6 +52,8 @@ function try_find_part_file!(name,library=get_part_library_dir())
             cache[name] = filepath
             cache[filepath] = filepath
             return filepath
+        else
+            cache[name] = name
         end
     end
     return name
