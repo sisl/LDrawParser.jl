@@ -543,7 +543,7 @@ function set_new_active_building_step!(model::MPDModel,state)
 end
 function active_part(model::MPDModel,state)
     # @assert !isempty(model.parts)
-    @assert has_part(model,state.active_part)
+    @assert has_part(model,state.active_part) "has_part(model,$(state.active_part))"
     # return model.parts[state.active_part]
     return get_part(model,state.active_part)
 end
@@ -580,13 +580,50 @@ function add_sub_file_placement!(model::MPDModel,state,ref)
 end
 
 """
+    preprocess_ldraw_file(io)
+
+Return a set of part names that are masquerading as submodels.
+"""
+function preprocess_ldraw_file(io)
+    state = MPDModelState()
+    model = MPDModel()
+    sneaky_parts = Set{String}()
+    current_filename = nothing
+    for line in eachline(io)
+        if length(line) == 0
+            continue
+        end
+        split_line = parse_line(line)
+        if isempty(split_line[1])
+            continue
+        end
+        code = parse_command_code(split_line)
+        @debug "LINE: $line"
+        @debug "code: $code"
+        if code == META
+            cmd = parse_meta_command(split_line[2:end])
+            if cmd == FILE || cmd == NAME
+                current_filename = join(split_line[3:end]," ")
+            end
+        elseif code == LINE || code == TRIANGLE || code == QUADRILATERAL || code == OPTIONAL_LINE
+            if !(current_filename === nothing)
+                push!(sneaky_parts,current_filename)
+            end
+        end
+    end
+    return sneaky_parts
+end
+"""
     parse_ldraw_file!
 
 Args:
     - model
     - filename or IO
 """
-function parse_ldraw_file!(model,io,state = MPDModelState())
+function parse_ldraw_file!(model,io,state = MPDModelState();
+        sneaky_parts=Set{String}(),
+    )
+    @show sneaky_parts
     # state = MPDModelState()
     for line in eachline(io)
         # try
@@ -601,7 +638,7 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
             @debug "LINE: $line"
             @debug "code: $code"
             if code == META
-                state = read_meta_line!(model,state,split_line)
+                state = read_meta_line!(model,state,split_line,sneaky_parts)
             elseif code == SUB_FILE_REF
                 state = read_sub_file_ref!(model,state,split_line)
             # Geometry
@@ -622,12 +659,14 @@ function parse_ldraw_file!(model,io,state = MPDModelState())
     end
     return model
 end
-function parse_ldraw_file!(model,filename::String,args...)
+function parse_ldraw_file!(model,filename::String,args...;kwargs...)
     open(find_part_file(filename),"r") do io
-        parse_ldraw_file!(model,io,args...)
+        parse_ldraw_file!(model,io,args...;kwargs...)
     end
 end
-parse_ldraw_file(io,args...) = parse_ldraw_file!(MPDModel(),io,args...)
+function parse_ldraw_file(io,args...;sneaky_parts=preprocess_ldraw_file(io),kwargs...)
+    parse_ldraw_file!(MPDModel(),io,args...;sneaky_parts=sneaky_parts,kwargs...)
+end
 parse_color(c) = parse(Int,c)
 
 
@@ -640,7 +679,7 @@ active model into which subsequent building steps will be placed.
 The STEP meta command indicates the end of the current step, which prompts the
 parser to close the current build step and begin a new one.
 """
-function read_meta_line!(model,state,line)
+function read_meta_line!(model,state,line,sneaky_parts=Set{String}())
     @assert parse_command_code(line[1]) == META
     if length(line) < 2
         @debug "Returning because length(line) < 2. Usually this means the end of the file"
@@ -653,7 +692,10 @@ function read_meta_line!(model,state,line)
         filename = join(line[3:end]," ")
         filename = try_find_part_file!(filename)
         ext = lowercase(splitext(filename)[2])
-        if ext == ".dat"
+        if filename in sneaky_parts
+            @warn "filename in sneaky parts!" filename
+        end
+        if ext == ".dat" || (filename in sneaky_parts)
             state = set_active_part!(model,state,filename)
             if state.file_type == NONE_FILE_TYPE
                 state.file_type = PART
@@ -709,7 +751,7 @@ function parse_color_def!(line)
     end
     if !(color_code === nothing) && !(color_val === nothing)
         global COLOR_DICT
-        @show color_val, alpha_val
+        # @show color_val, alpha_val
         COLOR_DICT[color_code] = alphacolor(color_val,alpha_val)
     end
 end
