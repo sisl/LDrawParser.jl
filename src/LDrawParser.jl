@@ -600,7 +600,11 @@ function preprocess_ldraw_file(io)
         code = parse_command_code(split_line)
         @debug "LINE: $line"
         @debug "code: $code"
-        if code == META
+        if code == META    
+            @assert parse_command_code(split_line[1]) == META
+            if length(split_line) < 2
+                continue
+            end
             cmd = parse_meta_command(split_line[2:end])
             if cmd == FILE || cmd == NAME
                 current_filename = join(split_line[3:end]," ")
@@ -613,6 +617,7 @@ function preprocess_ldraw_file(io)
     end
     return sneaky_parts
 end
+
 """
     parse_ldraw_file!
 
@@ -623,7 +628,7 @@ Args:
 function parse_ldraw_file!(model,io,state = MPDModelState();
         sneaky_parts=Set{String}(),
     )
-    @show sneaky_parts
+    # @show sneaky_parts
     # state = MPDModelState()
     for line in eachline(io)
         # try
@@ -631,7 +636,7 @@ function parse_ldraw_file!(model,io,state = MPDModelState();
                 continue
             end
             split_line = parse_line(line)
-            if isempty(split_line[1])
+            if isempty(split_line) || isempty(split_line[1])
                 continue
             end
             code = parse_command_code(split_line)
@@ -1039,6 +1044,9 @@ GeometryBasics.faces(n::GeometryBasics.Ngon{3,Float64,3,Point{3,Float64}}) = [
 # GeometryBasics.coordinates(n::GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}) where {N} = Vector(n.points)
 
 GeometryBasics.coordinates(v::AbstractVector) = collect(Base.Iterators.flatten(map(coordinates,v)))
+# function GeometryBasics.coordinates(v::AbstractVector{G}) where {G<:GeometryBasics.Ngon}
+#     vcat(map(coordinates,v)...)
+# end
 function GeometryBasics.coordinates(v::AbstractVector{G}) where {N,G<:GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}}
     vcat(map(coordinates,v)...)
 end
