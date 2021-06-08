@@ -317,13 +317,8 @@ Base.summary(n::SubModelPlan) = string("SubModelPlan: ",model_name(n),": ",
 
 
 const Quadrilateral{Dim,T} = GeometryBasics.Ngon{Dim,T,4,Point{Dim,T}}
-mutable struct Toggle
-    status::Bool
-end
-function set_status!(t::Toggle,val=true)
-    t.status = val
-end
-get_status(t::Toggle) = copy(t.status)
+set_status!(t::Toggle,val) = set_toggle_status!(t,val)
+get_status(t::Toggle) = get_toggle_status(t)
 
 """
     DATModel
@@ -766,26 +761,33 @@ end
 
 Load dictionary mapping Integer code to color.
 """
-function load_color_dict!(path=joinpath(get_part_library_dir(),"LDConfig.ldr"))
-    open(path) do io
-        for line in eachline(io)
-            if length(line) <= 1
-                continue
-            end
-            split_line = parse_line(line)
-            if isempty(split_line[1])
-                continue
-            end
-            code = parse_command_code(split_line)
-            @debug "LINE: $line"
-            @debug "code: $code"
-            if code == META
-                if parse_meta_command(split_line) == COLORDEF
-                    parse_color_def!(split_line)
+function load_color_dict!(paths=
+        [
+            joinpath(get_part_library_dir(),"LDConfig.ldr"),
+            joinpath(get_part_library_dir(),"LDCfgalt.ldr"),
+        ],
+        )
+    for path in paths
+        open(path) do io
+            for line in eachline(io)
+                if length(line) <= 1
+                    continue
+                end
+                split_line = parse_line(line)
+                if isempty(split_line[1])
+                    continue
+                end
+                code = parse_command_code(split_line)
+                @debug "LINE: $line"
+                @debug "code: $code"
+                if code == META
+                    if parse_meta_command(split_line) == COLORDEF
+                        parse_color_def!(split_line)
+                    end
                 end
             end
-        end
-    end 
+        end 
+    end
 end
 
 """
@@ -875,7 +877,8 @@ For reading lines of type QUADRILATERAL
 """
 function read_quadrilateral!(model,state,line)
     @assert parse_command_code(line[1]) == QUADRILATERAL
-    @assert length(line) == 14 "$line"
+    # @assert length(line) == 14 "$line"
+    @assert length(line) >= 14 "$line"
     color = parse_color(line[2])
     p1 = Point3D(parse.(Float64,line[3:5]))
     p2 = Point3D(parse.(Float64,line[6:8]))
