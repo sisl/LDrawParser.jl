@@ -1,16 +1,14 @@
+using LDrawParser
+using CoordinateTransformations
+using Rotations
+using GeometryBasics
+
 using Test
 using Logging
 
-using LDrawParser
-using CoordinateTransformations, Rotations
-using GeometryBasics
-
 # Set logging level
-# global_logger(SimpleLogger(stderr, Logging.Debug))
-global_logger(SimpleLogger(stderr, Logging.Info))
-
-# Fix randomness during tests
-# Random.seed!(0)
+log_level = Logging.Warn # Logging.Debug, Logging.Info, Logging.Warn, Logging.Error
+global_logger(SimpleLogger(stderr, log_level))
 
 @inline function array_isapprox(x::AbstractArray{F},
                   y::AbstractArray{F};
