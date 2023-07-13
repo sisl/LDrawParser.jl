@@ -1,13 +1,13 @@
 module LDrawParser
 
-using LightGraphs
 using GraphUtils
 using GeometryBasics
-using Rotations, CoordinateTransformations
+using Rotations
+using CoordinateTransformations
 using Parameters
-using Logging
 using StaticArrays
 using Colors
+using ProgressMeter
 
 export
     get_part_library_dir,
@@ -33,7 +33,7 @@ export
     ldraw_base_transform
 
 
-global PART_LIBRARY_DIR = "/scratch/ldraw_parts_library/ldraw/"
+global PART_LIBRARY_DIR = joinpath(homedir(), "Documents/ldraw")
 get_part_library_dir() = deepcopy(PART_LIBRARY_DIR)
 function set_part_library_dir!(path)
     PART_LIBRARY_DIR = path
@@ -78,7 +78,7 @@ function find_part_file(name,library=get_part_library_dir())
             end
         end
     end
-    @warn "Part file $name not found in library at $library"
+    @debug "Part file $name not found in library at $library"
     return nothing
 end
 
@@ -595,7 +595,7 @@ function preprocess_ldraw_file(io)
         code = parse_command_code(split_line)
         @debug "LINE: $line"
         @debug "code: $code"
-        if code == META    
+        if code == META
             @assert parse_command_code(split_line[1]) == META
             if length(split_line) < 2
                 continue
@@ -625,37 +625,34 @@ function parse_ldraw_file!(model,io,state = MPDModelState();
     )
     # @show sneaky_parts
     # state = MPDModelState()
+    prog = ProgressMeter.Progress(countlines(io); desc="Processing file...", showspeed=true)
+    seekstart(io)
     for line in eachline(io)
-        # try
-            if length(line) == 0
-                continue
-            end
-            split_line = parse_line(line)
-            if isempty(split_line) || isempty(split_line[1])
-                continue
-            end
-            code = parse_command_code(split_line)
-            @debug "LINE: $line"
-            @debug "code: $code"
-            if code == META
-                state = read_meta_line!(model,state,split_line,sneaky_parts)
-            elseif code == SUB_FILE_REF
-                state = read_sub_file_ref!(model,state,split_line)
-            # Geometry
-            elseif code == LINE
-                state = read_line!(model,state,split_line)
-            elseif code == TRIANGLE
-                state = read_triangle!(model,state,split_line)
-            elseif code == QUADRILATERAL
-                state = read_quadrilateral!(model,state,split_line)
-            elseif code == OPTIONAL_LINE
-                state = read_optional_line!(model,state,split_line)
-            end
-        # catch e
-        #     bt = catch_backtrace()
-        #     showerror(stdout,e,bt)
-        #     rethrow(e)
-        # end
+        next!(prog) # Should go at end, but we have a continue statment midway through
+        if length(line) == 0
+            continue
+        end
+        split_line = parse_line(line)
+        if isempty(split_line) || isempty(split_line[1])
+            continue
+        end
+        code = parse_command_code(split_line)
+        @debug "LINE: $line"
+        @debug "code: $code"
+        if code == META
+            state = read_meta_line!(model,state,split_line,sneaky_parts)
+        elseif code == SUB_FILE_REF
+            state = read_sub_file_ref!(model,state,split_line)
+        # Geometry
+        elseif code == LINE
+            state = read_line!(model,state,split_line)
+        elseif code == TRIANGLE
+            state = read_triangle!(model,state,split_line)
+        elseif code == QUADRILATERAL
+            state = read_quadrilateral!(model,state,split_line)
+        elseif code == OPTIONAL_LINE
+            state = read_optional_line!(model,state,split_line)
+        end
     end
     return model
 end
@@ -786,7 +783,7 @@ function load_color_dict!(paths=
                     end
                 end
             end
-        end 
+        end
     end
 end
 
@@ -928,10 +925,13 @@ function populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
     while !isempty(frontier)
         subcomponent = pop!(frontier)
         push!(explored,subcomponent)
-        partfile = find_part_file(subcomponent)
-        if partfile === nothing
-            @warn "Can't find file $subcomponent to populate geometry. Skipping..."
+
+        if has_model(model, subcomponent)
             continue
+        end
+        partfile = find_part_file(subcomponent)
+        if isnothing(partfile)
+            error("Could not find part file for $subcomponent and it is not a submodel in the current model")
         end
         parse_ldraw_file!(model,partfile,MPDModelState(active_part=subcomponent))
         for k in all_part_keys(model)
