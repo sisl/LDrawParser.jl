@@ -1,3 +1,5 @@
 /docs/build/
 Manifest.toml
 *.png
+.vscode
+.DS_Store
