@@ -1,8 +1,5 @@
 let
     P3 = Point3{Float64}
-    # p = Translation(1.0,2.0,3.0)
-    # r = zero(UnitQuaternion)
-    # t = compose(p,LinearMap(r))
     x = P3(0.0,0.0,0.0)
     l = Line(zeros(P3),ones(P3))
     tr = Triangle(
@@ -16,8 +13,8 @@ let
         ones(P3).+P3(1,2,3))
 
     for t in [
-            compose(Translation(0.0,0.0,0.0),LinearMap(zero(UnitQuaternion))),
-            compose(Translation(1.0,2.0,3.0),LinearMap(zero(UnitQuaternion))),
+            compose(Translation(0.0,0.0,0.0),LinearMap(zero(QuatRotation))),
+            compose(Translation(1.0,2.0,3.0),LinearMap(zero(QuatRotation))),
             compose(Translation(1.0,2.0,3.0),LinearMap(RotZ(π/4))),
         ]
         for g in [l,tr,q]

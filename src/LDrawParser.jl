@@ -1,12 +1,13 @@
 module LDrawParser
 
-using LightGraphs
 using GraphUtils
 using GeometryBasics
-using Rotations, CoordinateTransformations
+using Rotations
+using CoordinateTransformations
 using Parameters
-using Logging
 using StaticArrays
+using Colors
+using ProgressMeter
 
 export
     get_part_library_dir,
@@ -32,12 +33,37 @@ export
     ldraw_base_transform
 
 
-global PART_LIBRARY_DIR = "/scratch/ldraw_parts_library/ldraw/"
+global PART_LIBRARY_DIR = joinpath(homedir(), "Documents/ldraw")
 get_part_library_dir() = deepcopy(PART_LIBRARY_DIR)
 function set_part_library_dir!(path)
     PART_LIBRARY_DIR = path
 end
 
+global FILE_PATH_CACHE = Dict{String,String}()
+get_file_path_cache() = FILE_PATH_CACHE
+function try_find_part_file!(name,library=get_part_library_dir())
+    cache = get_file_path_cache()
+    if haskey(cache,name)
+        @debug "found $name in FILE_PATH_CACHE"
+        return cache[name]
+    else
+        filepath = find_part_file(name,library)
+        if !(filepath === nothing)
+            cache[name] = filepath
+            cache[filepath] = filepath
+            return filepath
+        else
+            cache[name] = name
+        end
+    end
+    return name
+end
+
+"""
+    find_part_file(name,library=get_part_library_dir())
+
+Try to find a file with name `name`, and return that file's path if found.
+"""
 function find_part_file(name,library=get_part_library_dir())
     if isfile(name)
         return name
@@ -52,9 +78,10 @@ function find_part_file(name,library=get_part_library_dir())
             end
         end
     end
-    println("Part file ",name," not found in library at ",library)
+    @debug "Part file $name not found in library at $library"
     return nothing
 end
+
 
 """
     FILE_TYPE
@@ -147,6 +174,7 @@ parse_command_code(k::AbstractString) = COMMAND_CODE(parse(Int,k))
     ROTSTEP_END
     FILE_TYPE_DECLARATION
     OTHER_META_COMMAND
+    COLORDEF
 end
 
 const META_COMMAND_DICT = Dict{String,META_COMMAND}(
@@ -156,7 +184,11 @@ const META_COMMAND_DICT = Dict{String,META_COMMAND}(
     "ROTSTEP END"   =>ROTSTEP_END,
     "NAME"          =>NAME,
     "NAME:"         =>NAME,
-    [k=>FILE_TYPE_DECLARATION for k in FILE_TYPE_HEADERS]...
+    [k=>FILE_TYPE_DECLARATION for k in FILE_TYPE_HEADERS]...,
+    "COLOUR"        =>COLORDEF,
+    "COLOR"         =>COLORDEF,
+    "!COLOUR"       =>COLORDEF,
+    "!COLOR"        =>COLORDEF,
 )
 parse_meta_command(k::AbstractString) = get(META_COMMAND_DICT, uppercase(k), OTHER_META_COMMAND)
 
@@ -256,10 +288,11 @@ file.
 struct BuildingStep
     parent::String # points to the SubModelPlan to which it belongs
     lines::Vector{SubFileRef}
-    BuildingStep(p::String) = new(p,Vector{SubFileRef}())
 end
 Base.push!(step::BuildingStep,ref::SubFileRef) = push!(step.lines,ref)
 n_lines(s::BuildingStep) = length(s.lines)
+BuildingStep(p::String) = BuildingStep(p,Vector{SubFileRef}())
+BuildingStep(step::BuildingStep,parent::String) = BuildingStep(parent,step.lines)
 
 """
     SubModelPlan
@@ -277,20 +310,15 @@ struct SubModelPlan
 end
 model_name(r::SubModelPlan) = r.name
 n_build_steps(m::SubModelPlan) = length(m.steps)
-n_components(m::SubModelPlan) = sum(map(n_lines,m.steps))
+n_assembly_components(m::SubModelPlan) = sum(map(n_lines,m.steps))
 BuildingStep(p::SubModelPlan) = BuildingStep(model_name(p))
 Base.summary(n::SubModelPlan) = string("SubModelPlan: ",model_name(n),": ",
-    n_build_steps(n)," building steps, ",n_components(n)," components")
+    n_build_steps(n)," building steps, ",n_assembly_components(n)," components")
 
 
 const Quadrilateral{Dim,T} = GeometryBasics.Ngon{Dim,T,4,Point{Dim,T}}
-mutable struct Toggle
-    status::Bool
-end
-function set_status!(t::Toggle,val=true)
-    t.status = val
-end
-get_status(t::Toggle) = copy(t.status)
+set_status!(t::Toggle,val) = set_toggle_status!(t,val)
+get_status(t::Toggle) = get_toggle_status(t)
 
 """
     DATModel
@@ -317,6 +345,16 @@ struct DATModel
         Toggle(false)
     )
 end
+function Base.summary(d::DATModel)
+    string("DATModel",
+    "\n\t","$(d.name)",
+    "\n\t","line_geometry:","$(length(d.line_geometry))",
+    "\n\t","triangle_geometry:","$(length(d.triangle_geometry))",
+    "\n\t","quad_geometry:","$(length(d.quadrilateral_geometry))",
+    "\n\t","optional_line_geometry:","$(length(d.optional_line_geometry))",
+    "\n\t","sub_files:","$(length(d.subfiles))",
+    "\n\t","populated: ","$(d.populated)")
+end
 model_name(r::DATModel) = r.name
 function extract_surface_geometry(m::DATModel)
     elements = Vector{GeometryBasics.Ngon}()
@@ -328,7 +366,10 @@ function extract_surface_geometry(m::DATModel)
     elements
 end
 function extract_geometry(m::DATModel)
+    # Base.Iterators.flatten()
+    # EL_TYPE = GeometryBasics.Ngon{3,T,M,V} where {T,M,V}
     elements = Vector{GeometryBasics.Ngon}()
+    # elements = Vector{EL_TYPE}()
     for vec in (
             m.line_geometry,
             m.triangle_geometry,
@@ -344,18 +385,28 @@ end
 function extract_points(m::DATModel)
     pts = Vector{Point3{Float64}}()
     for e in extract_geometry(m)
-        for pt in e.points
+        for pt in coordinates(e) #.points
             push!(pts,pt)
         end
     end
     pts
 end
+function geometry_iterator(m::DATModel)
+    Base.Iterators.flatten(
+        (m.line_geometry,
+        m.triangle_geometry,
+        m.quadrilateral_geometry,
+        m.optional_line_geometry)
+    )
+end
+points_iterator(m::DATModel) = Base.Iterators.flatten(map(e->e.geom.points,geometry_iterator(m)))
+GeometryBasics.coordinates(m::DATModel) = points_iterator(m)
 function incorporate_geometry!(m::DATModel,ref::SubFileRef,child::DATModel,scale=1.0)
     t = build_transform(ref)
     incorporate_geometry!(m,child,t,scale)
 end
 function incorporate_geometry!(m::DATModel,child::DATModel,t,scale=1.0)
-    # @info "incorporating geometry from $(child.name) into $(m.name)"
+    @info "incorporating geometry from $(child.name) into $(m.name)"
     for (parent_geometry,child_geometry) in zip(
             (m.line_geometry, m.triangle_geometry, m.quadrilateral_geometry,
                 m.optional_line_geometry),
@@ -465,8 +516,7 @@ function active_submodel(model::MPDModel,state)
     return model.models[state.active_model]
 end
 function set_active_model!(model::MPDModel,state,name)
-    # @assert !haskey(model.models,name)
-    if !haskey(model.models,name)
+    if !has_model(model,name)
         model.models[name] = SubModelPlan(name)
     else
         @debug "$name is already in model!"
@@ -488,7 +538,7 @@ function set_new_active_building_step!(model::MPDModel,state)
 end
 function active_part(model::MPDModel,state)
     # @assert !isempty(model.parts)
-    @assert has_part(model,state.active_part)
+    @assert has_part(model,state.active_part) "has_part(model,$(state.active_part))"
     # return model.parts[state.active_part]
     return get_part(model,state.active_part)
 end
@@ -525,54 +575,95 @@ function add_sub_file_placement!(model::MPDModel,state,ref)
 end
 
 """
+    preprocess_ldraw_file(io)
+
+Return a set of part names that are masquerading as submodels.
+"""
+function preprocess_ldraw_file(io)
+    state = MPDModelState()
+    model = MPDModel()
+    sneaky_parts = Set{String}()
+    current_filename = nothing
+    for line in eachline(io)
+        if length(line) == 0
+            continue
+        end
+        split_line = parse_line(line)
+        if isempty(split_line[1])
+            continue
+        end
+        code = parse_command_code(split_line)
+        @debug "LINE: $line"
+        @debug "code: $code"
+        if code == META
+            @assert parse_command_code(split_line[1]) == META
+            if length(split_line) < 2
+                continue
+            end
+            cmd = parse_meta_command(split_line[2:end])
+            if cmd == FILE || cmd == NAME
+                current_filename = join(split_line[3:end]," ")
+            end
+        elseif code == LINE || code == TRIANGLE || code == QUADRILATERAL || code == OPTIONAL_LINE
+            if !(current_filename === nothing)
+                push!(sneaky_parts,current_filename)
+            end
+        end
+    end
+    return sneaky_parts
+end
+
+"""
     parse_ldraw_file!
 
 Args:
     - model
     - filename or IO
 """
-function parse_ldraw_file!(model,io,state = MPDModelState())
+function parse_ldraw_file!(model,io,state = MPDModelState();
+        sneaky_parts=Set{String}(),
+    )
+    # @show sneaky_parts
     # state = MPDModelState()
+    prog = ProgressMeter.Progress(countlines(io); desc="Processing file...", showspeed=true)
+    seekstart(io)
     for line in eachline(io)
-        # try
-            if length(line) == 0
-                continue
-            end
-            split_line = parse_line(line)
-            if isempty(split_line[1])
-                continue
-            end
-            code = parse_command_code(split_line)
-            @debug "LINE: $line"
-            @debug "code: $code"
-            if code == META
-                state = read_meta_line!(model,state,split_line)
-            elseif code == SUB_FILE_REF
-                state = read_sub_file_ref!(model,state,split_line)
-            # Geometry
-            elseif code == LINE
-                state = read_line!(model,state,split_line)
-            elseif code == TRIANGLE
-                state = read_triangle!(model,state,split_line)
-            elseif code == QUADRILATERAL
-                state = read_quadrilateral!(model,state,split_line)
-            elseif code == OPTIONAL_LINE
-                state = read_optional_line!(model,state,split_line)
-            end
-        # catch e
-        #     bt = catch_backtrace()
-        #     showerror(stdout,e,bt)
-        #     rethrow(e)
-        # end
+        next!(prog) # Should go at end, but we have a continue statment midway through
+        if length(line) == 0
+            continue
+        end
+        split_line = parse_line(line)
+        if isempty(split_line) || isempty(split_line[1])
+            continue
+        end
+        code = parse_command_code(split_line)
+        @debug "LINE: $line"
+        @debug "code: $code"
+        if code == META
+            state = read_meta_line!(model,state,split_line,sneaky_parts)
+        elseif code == SUB_FILE_REF
+            state = read_sub_file_ref!(model,state,split_line)
+        # Geometry
+        elseif code == LINE
+            state = read_line!(model,state,split_line)
+        elseif code == TRIANGLE
+            state = read_triangle!(model,state,split_line)
+        elseif code == QUADRILATERAL
+            state = read_quadrilateral!(model,state,split_line)
+        elseif code == OPTIONAL_LINE
+            state = read_optional_line!(model,state,split_line)
+        end
     end
     return model
 end
-function parse_ldraw_file!(model,filename::String,args...)
+function parse_ldraw_file!(model,filename::String,args...;kwargs...)
     open(find_part_file(filename),"r") do io
-        parse_ldraw_file!(model,io,args...)
+        parse_ldraw_file!(model,io,args...;kwargs...)
     end
 end
-parse_ldraw_file(io,args...) = parse_ldraw_file!(MPDModel(),io,args...)
+function parse_ldraw_file(io,args...;sneaky_parts=preprocess_ldraw_file(io),kwargs...)
+    parse_ldraw_file!(MPDModel(),io,args...;sneaky_parts=sneaky_parts,kwargs...)
+end
 parse_color(c) = parse(Int,c)
 
 
@@ -585,7 +676,7 @@ active model into which subsequent building steps will be placed.
 The STEP meta command indicates the end of the current step, which prompts the
 parser to close the current build step and begin a new one.
 """
-function read_meta_line!(model,state,line)
+function read_meta_line!(model,state,line,sneaky_parts=Set{String}())
     @assert parse_command_code(line[1]) == META
     if length(line) < 2
         @debug "Returning because length(line) < 2. Usually this means the end of the file"
@@ -596,8 +687,12 @@ function read_meta_line!(model,state,line)
     @debug "cmd: $cmd"
     if cmd == FILE || cmd == NAME
         filename = join(line[3:end]," ")
+        filename = try_find_part_file!(filename)
         ext = lowercase(splitext(filename)[2])
-        if ext == ".dat"
+        if filename in sneaky_parts
+            @warn "filename in sneaky parts!" filename
+        end
+        if ext == ".dat" || (filename in sneaky_parts)
             state = set_active_part!(model,state,filename)
             if state.file_type == NONE_FILE_TYPE
                 state.file_type = PART
@@ -611,36 +706,100 @@ function read_meta_line!(model,state,line)
         @debug "file = $filename"
     elseif cmd == STEP
         set_new_active_building_step!(model,state)
-    # elseif cmd == ROTSTEP_BEGIN
-    #     rx,ry,rz = [parse(Float64,line[3]),parse(Float64,line[4]),parse(Float64,line[5])]
-    #     rot_mode = parse_rotation_mode(line[6])
-    #     rmat = RotMatrix(RotXYZ(rx,ry,rz)).mat
-    #     if rot_mode == ABS
-    #         empty!(state.rot_stack)
-    #         push!(state.rot_stack, rmat)
-    #     elseif rot_mode == REL
-    #         @warn "Need to be sure that RotXYZ does things in the right order"
-    #         push!(state.rot_stack, rmat)
-    #     elseif rot_mode == ADD
-    #         push!(state.rot_stack, rmat)
-    #     end
-    # elseif cmd == ROTSTEP_END
-    #     if length(state.rot_stack) > 1
-    #         pop!(state.rot_stack) # remove the last
-    #     else
-    #         state.rot_stack[1] = one(eltype(state.rot_stack))
-    #     end
     elseif cmd == FILE_TYPE_DECLARATION
         state.file_type = parse_file_type(line[3])
         if state.file_type == NONE_FILE_TYPE
             @debug "file type not resolved on line : $line"
         end
         @debug "file_type=$(state.file_type)"
+    elseif cmd == COLORDEF
+        # add color definition to global color dict
+        parse_color_def!(line)
     else
         # TODO Handle other META commands, especially BFC
     end
     return state
 end
+
+global COLOR_DICT = Dict{Int,ColorAlpha}()
+color_dict_is_loaded() = !isempty(COLOR_DICT)
+
+
+function parse_color_def!(line)
+    @assert parse_command_code(line[1]) == META
+    @assert parse_meta_command(line[2]) == COLORDEF
+    color_code = nothing
+    color_val = nothing
+    alpha_val = 1.0
+    val, line_iter = Base.Iterators.peel(line)
+    while !isempty(line_iter)
+        if val == "CODE"
+            val, line_iter = Base.Iterators.peel(line_iter)
+            color_code = parse(Int,val)
+        elseif val == "VALUE"
+            val, line_iter = Base.Iterators.peel(line_iter)
+            color_val = parse(Colorant,val)
+        elseif val == "ALPHA"
+            val, line_iter = Base.Iterators.peel(line_iter)
+            alpha_val = parse(Int,val) / 256.0
+        else
+            val, line_iter = Base.Iterators.peel(line_iter)
+        end
+    end
+    if !(color_code === nothing) && !(color_val === nothing)
+        global COLOR_DICT
+        # @show color_val, alpha_val
+        COLOR_DICT[color_code] = alphacolor(color_val,alpha_val)
+    end
+end
+
+"""
+    load_color_dict!(path=joinpath(get_part_library_dir(),"LDConfig.ldr")))
+
+Load dictionary mapping Integer code to color.
+"""
+function load_color_dict!(paths=
+        [
+            joinpath(get_part_library_dir(),"LDConfig.ldr"),
+            joinpath(get_part_library_dir(),"LDCfgalt.ldr"),
+        ],
+        )
+    for path in paths
+        open(path) do io
+            for line in eachline(io)
+                if length(line) <= 1
+                    continue
+                end
+                split_line = parse_line(line)
+                if isempty(split_line[1])
+                    continue
+                end
+                code = parse_command_code(split_line)
+                @debug "LINE: $line"
+                @debug "code: $code"
+                if code == META
+                    if parse_meta_command(split_line) == COLORDEF
+                        parse_color_def!(split_line)
+                    end
+                end
+            end
+        end
+    end
+end
+
+"""
+    get_color_dict()
+
+get dictionary mapping Integer code to color.
+"""
+function get_color_dict()
+    if !color_dict_is_loaded()
+        load_color_dict!()
+    end
+    deepcopy(COLOR_DICT)
+end
+
+
 
 """
     read_sub_file_ref
@@ -656,6 +815,7 @@ function read_sub_file_ref!(model,state,line)
     # rotation of part
     rot_mat = collect(transpose(reshape(parse.(Float64,line[6:14]),3,3)))
     file = join(line[15:end]," ")
+    file = try_find_part_file!(file)
     # TODO add a line struct to the model
     ref = SubFileRef(
         color,
@@ -714,7 +874,8 @@ For reading lines of type QUADRILATERAL
 """
 function read_quadrilateral!(model,state,line)
     @assert parse_command_code(line[1]) == QUADRILATERAL
-    @assert length(line) == 14 "$line"
+    # @assert length(line) == 14 "$line"
+    @assert length(line) >= 14 "$line"
     color = parse_color(line[2])
     p1 = Point3D(parse.(Float64,line[3:5]))
     p2 = Point3D(parse.(Float64,line[6:8]))
@@ -752,7 +913,6 @@ function read_optional_line!(model,state,line)
     return state
 end
 
-
 """
     populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
 
@@ -765,13 +925,15 @@ function populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
     while !isempty(frontier)
         subcomponent = pop!(frontier)
         push!(explored,subcomponent)
-        partfile = find_part_file(subcomponent)
-        if partfile === nothing
-            @warn "Can't find file $subcomponent to populate geometry. Skipping..."
+
+        if has_model(model, subcomponent)
             continue
         end
+        partfile = find_part_file(subcomponent)
+        if isnothing(partfile)
+            error("Could not find part file for $subcomponent and it is not a submodel in the current model")
+        end
         parse_ldraw_file!(model,partfile,MPDModelState(active_part=subcomponent))
-        # for k in keys(model.parts)
         for k in all_part_keys(model)
             if !(k in explored)
                 push!(frontier,k)
@@ -882,8 +1044,12 @@ GeometryBasics.faces(n::GeometryBasics.Ngon{3,Float64,4,Point{3,Float64}}) = [
 GeometryBasics.faces(n::GeometryBasics.Ngon{3,Float64,3,Point{3,Float64}}) = [
     TriangleFace{Int}(1,2,3)
 ]
-GeometryBasics.coordinates(n::GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}) where {N} = Vector(n.points)
+# GeometryBasics.coordinates(n::GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}) where {N} = Vector(n.points)
 
+GeometryBasics.coordinates(v::AbstractVector) = collect(Base.Iterators.flatten(map(coordinates,v)))
+# function GeometryBasics.coordinates(v::AbstractVector{G}) where {G<:GeometryBasics.Ngon}
+#     vcat(map(coordinates,v)...)
+# end
 function GeometryBasics.coordinates(v::AbstractVector{G}) where {N,G<:GeometryBasics.Ngon{3,Float64,N,Point{3,Float64}}}
     vcat(map(coordinates,v)...)
 end
@@ -899,12 +1065,12 @@ function GeometryBasics.faces(v::AbstractVector{G}) where {G<:GeometryBasics.Ngo
     end
     return face_vec
 end
-function GeometryBasics.coordinates(v::AbstractVector{G}) where {G<:GeometryBasics.Ngon}
-    coords = Vector{Point{3,Float64}}()
-    for element in v
-        append!(coords, coordinates(element))
-    end
-    return coords
-end
+# function GeometryBasics.coordinates(v::AbstractVector{G}) where {G<:GeometryBasics.Ngon}
+#     coords = Vector{Point{3,Float64}}()
+#     for element in v
+#         append!(coords, coordinates(element))
+#     end
+#     return coords
+# end
 
 end
