@@ -8,6 +8,7 @@ using Parameters
 using StaticArrays
 using Colors
 using ProgressMeter
+using LinearAlgebra: det
 
 export
     get_part_library_dir,
@@ -263,6 +264,13 @@ struct SubFileRef
     pos::Point3D
     rot::Mat{3,3,Float64}
     file::String
+
+    function SubFileRef(color, pos, rot, file)
+        if det(rot) < 0
+            @warn "Determinant of rotation matrix is negative! Component referenced: $file"
+        end
+        return new(color, pos, rot, file)
+    end
 end
 Base.summary(s::SubFileRef) = string("SubFileRef → ",s.file," : ",s.pos)
 model_name(r::SubFileRef) = r.file
@@ -625,10 +633,10 @@ function parse_ldraw_file!(model,io,state = MPDModelState();
     )
     # @show sneaky_parts
     # state = MPDModelState()
-    prog = ProgressMeter.Progress(countlines(io); desc="Processing file...", showspeed=true)
+    prog = ProgressMeter.Progress(countlines(io); desc="Processing file...", showspeed=true, barlen=50)
     seekstart(io)
     for line in eachline(io)
-        next!(prog) # Should go at end, but we have a continue statment midway through
+        next!(prog) # Should go at end, but we have a continue statement midway through
         if length(line) == 0
             continue
         end
