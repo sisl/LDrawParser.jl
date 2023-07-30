@@ -592,6 +592,7 @@ function preprocess_ldraw_file(io)
     model = MPDModel()
     sneaky_parts = Set{String}()
     current_filename = nothing
+    include_sub_file_ref = false
     for line in eachline(io)
         if length(line) == 0
             continue
@@ -601,8 +602,6 @@ function preprocess_ldraw_file(io)
             continue
         end
         code = parse_command_code(split_line)
-        @debug "LINE: $line"
-        @debug "code: $code"
         if code == META
             @assert parse_command_code(split_line[1]) == META
             if length(split_line) < 2
@@ -611,8 +610,12 @@ function preprocess_ldraw_file(io)
             cmd = parse_meta_command(split_line[2:end])
             if cmd == FILE || cmd == NAME
                 current_filename = join(split_line[3:end]," ")
+                include_sub_file_ref = false
+                if current_filename[end-3:end] == ".dat"
+                    include_sub_file_ref = true
+                end
             end
-        elseif code == LINE || code == TRIANGLE || code == QUADRILATERAL || code == OPTIONAL_LINE
+        elseif code == LINE || code == TRIANGLE || code == QUADRILATERAL || code == OPTIONAL_LINE || (include_sub_file_ref && code == SUB_FILE_REF)
             if !(current_filename === nothing)
                 push!(sneaky_parts,current_filename)
             end
