@@ -935,16 +935,19 @@ function populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
     explored = Set{String}()
     while !isempty(frontier)
         subcomponent = pop!(frontier)
-        push!(explored,subcomponent)
+        push!(explored, subcomponent)
 
         if has_model(model, subcomponent)
             continue
         end
         partfile = find_part_file(subcomponent)
         if isnothing(partfile)
+            if subcomponent in part_keys(model)
+                continue
+            end
             error("Could not find part file for $subcomponent and it is not a submodel in the current model")
         end
-        parse_ldraw_file!(model,partfile,MPDModelState(active_part=subcomponent))
+        parse_ldraw_file!(model, partfile, MPDModelState(active_part=subcomponent))
         for k in all_part_keys(model)
             if !(k in explored)
                 push!(frontier,k)
