@@ -942,7 +942,7 @@ function populate_part_geometry!(model,frontier=Set(collect(part_keys(model))))
         end
         partfile = find_part_file(subcomponent)
         if isnothing(partfile)
-            if subcomponent in part_keys(model)
+            if subcomponent in all_part_keys(model)
                 continue
             end
             error("Could not find part file for $subcomponent and it is not a submodel in the current model")
