@@ -599,12 +599,23 @@ end
     parse_ldraw_file!
 
 Args:
-    - model
-    - filename or IO
+    - model: MPDModel
+        The model into which the LDraw file will be parsed.
+    - filename or IO: part filename
+    - state: MPDModelState = MPDModelState()
+        The state of the parser. This is used to keep track of the active model
+        and active part.
+Keyword Args:
+    - sneaky_parts: Set{String} = Set{String}()
+        Set of part names that are masquerading as submodels.
+    - ignore_rotation_determinant: Bool = false
+        If true, ignore the determinant of the rotation matrix. This is useful
+        for parts that are not properly oriented in the LDraw library.
 """
-function parse_ldraw_file!(model, io, state=MPDModelState();
+function parse_ldraw_file!(
+    model, io, state=MPDModelState();
     sneaky_parts=Set{String}(), ignore_rotation_determinant=false
-    )
+)
     prog = ProgressMeter.Progress(countlines(io); desc="Processing file...", showspeed=true, barlen=50)
     seekstart(io)
     for line in eachline(io)
@@ -641,6 +652,19 @@ function parse_ldraw_file!(model, filename::String, args...; kwargs...)
         parse_ldraw_file!(model, io, args...; kwargs...)
     end
 end
+"""
+    parse_ldraw_file(filename::String, args...; kwargs...)
+
+Parse an LDraw file and return an MPDModel.
+
+Args:
+    - filename: String
+        The name of the LDraw file to parse.
+Keyword Args:
+    - ignore_rotation_determinant: Bool = false
+        If true, ignore the determinant of the rotation matrix. This is useful
+        for parts that are not properly oriented in the LDraw library.
+"""
 function parse_ldraw_file(io, args...; sneaky_parts=preprocess_ldraw_file(io), kwargs...)
     parse_ldraw_file!(MPDModel(), io, args...; sneaky_parts=sneaky_parts, kwargs...)
 end
