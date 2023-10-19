@@ -1,11 +1,12 @@
-```@meta
-CurrentModule = LDrawParser
-```
-
 # LDrawParser
+A package for parsing [LDraw](https://www.ldraw.org/) files for LEGO CAD applications.
 
-```@index
+## Manual Outline
+
+```@contents
 ```
+
+## Functions
 
 ```@autodocs
 Modules = [LDrawParser]

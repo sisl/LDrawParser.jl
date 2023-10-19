@@ -1,21 +1,13 @@
-using LDrawParser
-using Documenter
+using Documenter, LDrawParser
 
-makedocs(;
-    modules=[LDrawParser],
-    authors="kylebrown <kylejbrown17@gmail.com> and contributors",
-    repo="https://github.com/kylejbrown17/LDrawParser.jl/blob/{commit}{path}#L{line}",
-    sitename="LDrawParser.jl",
-    format=Documenter.HTML(;
-        prettyurls=get(ENV, "CI", "false") == "true",
-        canonical="https://kylejbrown17.github.io/LDrawParser.jl",
-        assets=String[],
-    ),
-    pages=[
-        "Home" => "index.md",
-    ],
+makedocs(
+    modules = [LDrawParser],
+    format = Documenter.HTML(),
+    sitename = "LDrawParser.jl",
+    checkdocs = :none
 )
 
-deploydocs(;
-    repo="github.com/kylejbrown17/LDrawParser.jl",
+deploydocs(
+    repo = "github.com/sisl/LDrawParser.jl",
+    versions = ["stable" => "v^", "v#.#"]
 )

@@ -3,74 +3,52 @@ on:
   push:
     branches:
       - master
+    tags: '*'
+  pull_request:
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         version:
-          # - '1.1'
-          - '1.4'
-          # - 'nightly'
+          - "1"
         os:
           - ubuntu-latest
-          # - macOS-latest
-          # - windows-latest
+          - macOS-latest
+          - windows-latest
         arch:
           - x64
-          # - x86
-        # exclude:
-        #   - os: macOS-latest
-        #     arch: x86
+          # - aarch64
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/cache@v1
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
-      - run: julia -e 'using Pkg; pkg"registry add https://github.com/JuliaRegistries/General"'
-      - uses: webfactory/ssh-agent@v0.4.1 # Use to add private ssh key to match deploy key
-        with:
-          ssh-private-key: ${{ secrets.JULIA_PACKAGE_REGISTRY_KEY }}
-      - run: julia -e 'using Pkg; pkg"registry add git@github.com:kylejbrown17/JuliaPackageRegistry.git"'
-      - run: ls ~/.julia/registries
+      - uses: julia-actions/cache@v1
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v3
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: lcov.info
   docs:
     name: Documentation
+    permissions: write-all
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: '1'
-      - run: julia -e 'using Pkg; pkg"registry add https://github.com/JuliaRegistries/General"'
-      - uses: webfactory/ssh-agent@v0.4.1 # Use to add private ssh key to match deploy key
-        with:
-          ssh-private-key: ${{ secrets.JULIA_PACKAGE_REGISTRY_KEY }}
-      - run: julia -e 'using Pkg; pkg"registry add git@github.com:kylejbrown17/JuliaPackageRegistry.git"'
-      - run: |
-          julia --project=docs -e '
-            using Pkg
-            Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.instantiate()'
-      - run: |
-          julia --project=docs -e '
-            using Documenter: doctest
-            using LDrawParser 
-            doctest(LDrawParser)'
-      - run: julia --project=docs docs/make.jl
+      - uses: actions/checkout@v4
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-docdeploy@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # If authenticating with GitHub Actions token
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }} # If authenticating with SSH deploy key

@@ -12,18 +12,6 @@
 0 !HISTORY 2012-01-08 [theJudeAbides] Initial file created.
 0 !HISTORY 2016-02-22 [legolijntje] Updated ~moved references
 
-1 0 0 0 0 1 0 0 0 1 0 0 0 1 30051 - Fighter.ldr
-
-0 FILE 30051 - Fighter.ldr
-0 Fighter
-0 Name: 30051 - Fighter.ldr
-0 Author: Jude Parrill
-0 !LDRAW_ORG Model
-0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
-0 !THEME Star Wars
-0 !KEYWORDS Star Wars,  Space,  MINI,  Original Trilogy
-0 !KEYWORDS X-Wing,  Starfighter
-0 !HISTORY 2012-01-08 [theJudeAbides] Initial file created.
 0 ROTSTEP 35 55 0 ABS
 1 19 0 0 0 0 0 1 0 1 0 -1 0 0 3623.dat
 0 STEP
@@ -71,6 +59,7 @@
 1 71 -30 2 50 -0.965926 -0.258819 0 0.258819 -0.965926 0 0 0 1 30051 - Lower-Right Wing.ldr
 1 71 30 -22 50 0.965926 0.258819 0 -0.258819 0.965926 0 0 0 1 30051 - Upper-left Wing.ldr
 
+0 NOFILE
 0 FILE 30051 - Nose.ldr
 0 Nose
 0 Name: 30051 - Nose.ldr
@@ -87,6 +76,7 @@
 1 15 0 -8 20 0 0 1 0 1 0 -1 0 0 3023.dat
 1 71 0 0 -10 1 0 0 0 1 0 0 0 1 54200.dat
 
+0 NOFILE
 0 FILE 30051 - Engine.ldr
 0 Engine
 0 Name: 30051 - Engine.ldr
@@ -106,6 +96,7 @@
 1 72 0 -98 0 1 0 0 0 1 0 0 0 1 6141.dat
 1 57 0 -106 0 1 0 0 0 1 0 0 0 1 6141.dat
 
+0 NOFILE
 0 FILE 30051 - Lower-Left Wing.ldr
 0 Lower-Left Wing
 0 Name: 30051 - Lower-Left Wing.ldr
@@ -123,6 +114,7 @@
 1 72 -60 -18 0 0 0 1 0 1 0 -1 0 0 6019.dat
 1 71 -80 -16 -50 0 0 1 0 1 0 -1 0 0 61184.dat
 
+0 NOFILE
 0 FILE 30051 - Upper-Right Wing.ldr
 0 Upper-Right Wing
 0 Name: 30051 - Upper-Right Wing.ldr
@@ -138,6 +130,7 @@
 0 STEP
 1 320 -30 -18 0 1 0 0 0 1 0 0 0 1 2412b.dat
 
+0 NOFILE
 0 FILE 30051 - Lower-Right Wing.ldr
 0 Lower-Right Wing
 0 Name: 30051 - Lower-Right Wing.ldr
@@ -155,6 +148,7 @@
 1 72 60 -18 0 0 0 -1 0 1 0 1 0 0 6019.dat
 1 71 80 -16 -50 0 0 1 0 1 0 -1 0 0 61184.dat
 
+0 NOFILE
 0 FILE 30051 - Upper-left Wing.ldr
 0 Upper-left Wing
 0 Name: 30051 - Upper-left Wing.ldr
@@ -170,3 +164,4 @@
 0 STEP
 1 320 30 -18 0 1 0 0 0 1 0 0 0 1 2412b.dat
 
+0 NOFILE
