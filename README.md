@@ -1,5 +1,5 @@
 # LDrawParser
-[![Build Status](https://github.com/SISL/LDrarwParser.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/SISL/LDrawParser.jl/actions/workflows/CI.yml/)
+[![CI](https://github.com/sisl/LDrawParser.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/sisl/LDrawParser.jl/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/JuliaPOMDP/SARSOP.jl/branch/master/graph/badge.svg?token=c4tQjlMbDX)](https://codecov.io/gh/SISL/LDrawParser.jl)
 [![Docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://SISL.github.io/LDrawParser.jl/stable)
 
