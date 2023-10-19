@@ -39,7 +39,19 @@ end
 get_toggle_status(t::Toggle) = copy(t.status)
 
 global PART_LIBRARY_DIR = joinpath(homedir(), "Documents/ldraw")
+"""
+    get_part_library_dir()
+
+Return the path to the LDraw part library. This is the directory that contains
+the parts, primitives, and subparts directories.
+"""
 get_part_library_dir() = deepcopy(PART_LIBRARY_DIR)
+"""
+    set_part_library_dir!(path)
+
+Set the path to the LDraw part library. This is the directory that contains the
+parts, primitives, and subparts directories.
+"""
 function set_part_library_dir!(path)
     global PART_LIBRARY_DIR = path
 end
@@ -1014,7 +1026,7 @@ end
 """
     change_coordinate_system!(model::MPDModel, T=ldraw_base_transform(), scale=1.0; ignore_rotation_determinant=false)
 
-Transform the coordinate system of the entire model
+Transform the coordinate system of the entire model using transform `T` and scale `scale`.
 """
 function change_coordinate_system!(model::MPDModel, T=ldraw_base_transform(), scale=1.0; ignore_rotation_determinant=false)
     Tinv = inv(T)
