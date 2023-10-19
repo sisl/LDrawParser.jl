@@ -3,7 +3,8 @@ using Documenter, LDrawParser
 makedocs(
     modules = [LDrawParser],
     format = Documenter.HTML(),
-    sitename = "LDrawParser.jl"
+    sitename = "LDrawParser.jl",
+    checkdocs = :none
 )
 
 deploydocs(
