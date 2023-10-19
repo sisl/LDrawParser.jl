@@ -47,8 +47,10 @@ end
 let
     filename = joinpath(dirname(pathof(LDrawParser)), "..", "assets", "6339-1 - Shuttle Launch Pad.mpd")
     model = parse_ldraw_file(filename; ignore_rotation_determinant=true)
-    LDrawParser.populate_part_geometry!(model; ignore_rotation_determinant=false)
+    if isdir(get_part_library_dir())
+        LDrawParser.populate_part_geometry!(model; ignore_rotation_determinant=false)
+        ldraw_color_dict = LDrawParser.get_color_dict()
+    end
     LDrawParser.change_coordinate_system!(model, ldraw_base_transform(), 0.1; ignore_rotation_determinant=true)
-    ldraw_color_dict = LDrawParser.get_color_dict()
     get_part(model, 0)
 end
