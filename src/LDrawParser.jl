@@ -42,7 +42,7 @@ get_toggle_status(t::Toggle) = copy(t.status)
 global PART_LIBRARY_DIR = joinpath(homedir(), "Documents/ldraw")
 get_part_library_dir() = deepcopy(PART_LIBRARY_DIR)
 function set_part_library_dir!(path)
-    PART_LIBRARY_DIR = path
+    global PART_LIBRARY_DIR = path
 end
 
 global FILE_PATH_CACHE = Dict{String,String}()

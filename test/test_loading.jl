@@ -11,14 +11,16 @@ let
     @test length(model.models["20009 - Turret.ldr"].steps) == 7
 
     # load geometry, need ldraw parts library for this to work
-    if isdir(get_part_library_dir())
-        LDrawParser.populate_part_geometry!(model; ignore_rotation_determinant=true)
-        @test !isempty(model.sub_parts)
-        for (k, p) in Base.Iterators.flatten((model.parts, model.sub_parts))
-            @assert p.populated.status == true
-        end
-    else
-        @warn "Skipping tests for populate_part_geometry!(...) because $(get_part_library_dir()) does not exist"
+    if !isdir(get_part_library_dir())
+        # set the temporary one for testing
+        LDrawParser.set_part_library_dir!(joinpath(dirname(pathof(LDrawParser)), "..", "assets", "test_parts_lib"))
+    end
+
+    LDrawParser.set_part_library_dir!(joinpath(dirname(pathof(LDrawParser)), "..", "assets", "test_parts_lib"))
+    LDrawParser.populate_part_geometry!(model; ignore_rotation_determinant=true)
+    @test !isempty(model.sub_parts)
+    for (k, p) in Base.Iterators.flatten((model.parts, model.sub_parts))
+        @assert p.populated.status == true
     end
 end
 let
