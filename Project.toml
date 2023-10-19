@@ -15,14 +15,14 @@ Rotations = "6038ab10-8711-5258-84ad-4b1120ba62dc"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
-julia = "1.6"
-Parameters = "0.12"
+Colors = "0.12.10"
+CoordinateTransformations = "0.6.3"
+GeometryBasics = "0.4.9"
 LinearAlgebra = "1.6"
+Parameters = "0.12"
 Rotations = "1.6"
 StaticArrays = "1.6"
-CoordinateTransformations = "0.6.3"
-Colors = "0.12.10"
-GeometryBasics = "0.4.9"
+julia = "1.6"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
