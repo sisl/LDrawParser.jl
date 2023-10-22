@@ -20,7 +20,7 @@ model.parts
 ### Module
 To install the module, run the following command in the Julia REPL:
 ```Julia
-] add https://github.com/sisl/LDrawParser.jl.git
+] add LDrawParser
 ```
 
 ### Parts Library
