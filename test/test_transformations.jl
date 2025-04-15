@@ -6,7 +6,7 @@ let
         zeros(P3),
         ones(P3),
         0.5*ones(P3))
-    q = GeometryBasics.Ngon{3,Float64,4,P3}(
+    q = GeometryBasics.Ngon{3,Float64,4}(
         zeros(P3),
         ones(P3),
         -ones(P3),

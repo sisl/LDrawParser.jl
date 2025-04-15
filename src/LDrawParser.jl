@@ -338,7 +338,7 @@ function Base.show(io::IO, n::SubModelPlan)
 end
 
 
-const Quadrilateral{Dim,T} = GeometryBasics.Ngon{Dim,T,4,Point{Dim,T}}
+const Quadrilateral{Dim,T} = GeometryBasics.Ngon{Dim,T,4}
 set_status!(t::Toggle, val) = set_toggle_status!(t, val)
 get_status(t::Toggle) = get_toggle_status(t)
 
